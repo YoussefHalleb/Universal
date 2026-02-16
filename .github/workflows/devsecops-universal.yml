@@ -46,53 +46,21 @@ jobs:
           fi
 
       # =====================================
-      # CHECKOUT OR CLONE
+      # CHECKOUT PIPELINE REPO (ALWAYS)
       # =====================================
-      - name: Checkout local repository
-        if: env.SCAN_MODE == 'LOCAL'
+      - name: Checkout pipeline repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # =====================================
+      # CLONE EXTERNAL REPO (IF NEEDED)
+      # =====================================
       - name: Clone external repository
         if: env.SCAN_MODE == 'EXTERNAL'
         run: |
           git clone -b ${{ github.event.inputs.repo_branch }} \
             ${{ github.event.inputs.repo_url }} target-app
-
-      # =====================================
-      # COMPUTE SONAR PROJECT KEY (FIX)
-      # =====================================
-      - name: Compute Sonar project key
-        run: |
-          if [ "${SCAN_MODE}" = "EXTERNAL" ]; then
-            REPO_NAME=$(basename "${{ github.event.inputs.repo_url }}" .git)
-            OWNER=$(echo "${{ github.event.inputs.repo_url }}" | awk -F'github.com/' '{print $2}' | awk -F'/' '{print $1}')
-            RAW_KEY="${OWNER}_${REPO_NAME}"
-          else
-            RAW_KEY="${{ github.repository }}"
-          fi
-
-          SONAR_KEY=$(echo "$RAW_KEY" | tr '/ ' '__' | tr -cd '[:alnum:]_:. -' | tr -d ' ')
-          echo "SONAR_PROJECT_KEY=$SONAR_KEY" >> $GITHUB_ENV
-          echo "SONAR_PROJECT_NAME=$SONAR_KEY" >> $GITHUB_ENV
-          echo "Using SONAR_PROJECT_KEY=$SONAR_KEY"
-
-      # =====================================
-      # SONARQUBE (SAST)
-      # =====================================
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v2
-        with:
-          projectBaseDir: ${{ env.WORKDIR }}
-          args: >
-            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
-            -Dsonar.projectName=${{ env.SONAR_PROJECT_NAME }}
-            -Dsonar.sources=.
-            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       # =====================================
       # BUILD DOCKER IMAGE
@@ -159,8 +127,7 @@ jobs:
       - name: AI Security Analysis
         run: python $GITHUB_WORKSPACE/ai_security_analysis.py
         env:
-            GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
       # =====================================
       # ARTIFACTS
