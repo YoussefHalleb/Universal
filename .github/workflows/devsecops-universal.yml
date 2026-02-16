@@ -1,8 +1,8 @@
 name: Universal DevSecOps Pipeline
 # ==========================================
 # 1 PIPELINE – 2 MODES
-# - LOCAL  : push / pull_request
-# - EXTERNAL : Run workflow + repo_url
+# - LOCAL     : push / pull_request
+# - EXTERNAL  : Run workflow + repo_url
 # ==========================================
 
 on:
@@ -15,6 +15,10 @@ on:
       repo_url:
         description: "GitHub repository URL (leave empty for local repo)"
         required: false
+      repo_branch:
+        description: "Git branch (default: main)"
+        required: false
+        default: "main"
       app_port:
         description: "Application port (default 8080)"
         required: false
@@ -53,7 +57,26 @@ jobs:
       - name: Clone external repository
         if: env.SCAN_MODE == 'EXTERNAL'
         run: |
-          git clone ${{ github.event.inputs.repo_url }} target-app
+          git clone -b ${{ github.event.inputs.repo_branch }} \
+            ${{ github.event.inputs.repo_url }} target-app
+
+      # =====================================
+      # COMPUTE SONAR PROJECT KEY (FIX)
+      # =====================================
+      - name: Compute Sonar project key
+        run: |
+          if [ "${SCAN_MODE}" = "EXTERNAL" ]; then
+            REPO_NAME=$(basename "${{ github.event.inputs.repo_url }}" .git)
+            OWNER=$(echo "${{ github.event.inputs.repo_url }}" | awk -F'github.com/' '{print $2}' | awk -F'/' '{print $1}')
+            RAW_KEY="${OWNER}_${REPO_NAME}"
+          else
+            RAW_KEY="${{ github.repository }}"
+          fi
+
+          SONAR_KEY=$(echo "$RAW_KEY" | tr '/ ' '__' | tr -cd '[:alnum:]_:. -' | tr -d ' ')
+          echo "SONAR_PROJECT_KEY=$SONAR_KEY" >> $GITHUB_ENV
+          echo "SONAR_PROJECT_NAME=$SONAR_KEY" >> $GITHUB_ENV
+          echo "Using SONAR_PROJECT_KEY=$SONAR_KEY"
 
       # =====================================
       # SONARQUBE (SAST)
@@ -63,8 +86,8 @@ jobs:
         with:
           projectBaseDir: ${{ env.WORKDIR }}
           args: >
-            -Dsonar.projectKey=${{ github.repository }}
-            -Dsonar.projectName=${{ github.repository }}
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.projectName=${{ env.SONAR_PROJECT_NAME }}
             -Dsonar.sources=.
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
         env:
