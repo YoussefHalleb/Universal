@@ -1,10 +1,13 @@
-import requests, os, sys
+import requests
+import os
+import sys
 from datetime import date
 
 DD_URL = os.getenv("DEFECTDOJO_URL")
 DD_TOKEN = os.getenv("DEFECTDOJO_API_KEY")
 REPO = os.getenv("GITHUB_REPOSITORY")
 BUILD = os.getenv("GITHUB_RUN_NUMBER")
+COMMIT = os.getenv("GITHUB_SHA")
 
 if not DD_URL or not DD_TOKEN:
     print("Missing DefectDojo configuration")
@@ -12,9 +15,16 @@ if not DD_URL or not DD_TOKEN:
 
 headers = {"Authorization": f"Token {DD_TOKEN}"}
 
-# Get or create Product
+# ================================
+# Create or Get Product
+# ================================
 product_name = REPO.replace("/", "_")
-r = requests.get(f"{DD_URL}/api/v2/products/?name={product_name}", headers=headers)
+
+r = requests.get(
+    f"{DD_URL}/api/v2/products/?name={product_name}",
+    headers=headers
+)
+
 if r.json()["count"] > 0:
     product_id = r.json()["results"][0]["id"]
 else:
@@ -29,7 +39,11 @@ else:
     )
     product_id = r.json()["id"]
 
-# Create Engagement
+print(f"Using Product ID: {product_id}")
+
+# ================================
+# Create Engagement (per commit)
+# ================================
 r = requests.post(
     f"{DD_URL}/api/v2/engagements/",
     headers=headers,
@@ -39,13 +53,19 @@ r = requests.post(
         "target_start": str(date.today()),
         "target_end": str(date.today()),
         "status": "In Progress",
-        "engagement_type": "CI/CD"
+        "engagement_type": "CI/CD",
+        "description": f"Commit: {COMMIT}"
     }
 )
-engagement_id = r.json()["id"]
 
+engagement_id = r.json()["id"]
+print(f"Using Engagement ID: {engagement_id}")
+
+# ================================
 # Import Trivy
+# ================================
 if os.path.exists("trivy.json"):
+    print("Uploading Trivy results...")
     requests.post(
         f"{DD_URL}/api/v2/import-scan/",
         headers=headers,
@@ -59,8 +79,11 @@ if os.path.exists("trivy.json"):
         }
     )
 
+# ================================
 # Import ZAP
+# ================================
 if os.path.exists("zap.xml"):
+    print("Uploading ZAP results...")
     requests.post(
         f"{DD_URL}/api/v2/import-scan/",
         headers=headers,
@@ -76,13 +99,18 @@ if os.path.exists("zap.xml"):
 
 print("DefectDojo upload completed.")
 
-# Fail if Critical findings exist
+# ================================
+# Fail ONLY if this product has Critical findings
+# ================================
 r = requests.get(
-    f"{DD_URL}/api/v2/findings/?severity=Critical",
+    f"{DD_URL}/api/v2/findings/?product={product_id}&severity=Critical&active=true",
     headers=headers
 )
 
-if r.json().get("count", 0) > 0:
-    print("❌ Critical findings detected in DefectDojo.")
-    sys.exit(1)
+critical_count = r.json().get("count", 0)
 
+if critical_count > 0:
+    print(f"❌ {critical_count} Critical findings detected in this repository.")
+    sys.exit(1)
+else:
+    print("✅ No Critical findings for this repository.")
