@@ -75,3 +75,14 @@ if os.path.exists("zap.xml"):
     )
 
 print("DefectDojo upload completed.")
+
+# Fail if Critical findings exist
+r = requests.get(
+    f"{DD_URL}/api/v2/findings/?severity=Critical",
+    headers=headers
+)
+
+if r.json().get("count", 0) > 0:
+    print("❌ Critical findings detected in DefectDojo.")
+    sys.exit(1)
+
