@@ -28,9 +28,9 @@ jobs:
       IMAGE_NAME: scanned-app
 
     steps:
-      # =============================
-      # Detect Mode
-      # =============================
+      # ====================================
+      # Detect Scan Mode
+      # ====================================
       - name: Detect scan mode
         run: |
           if [ -z "${{ github.event.inputs.repo_url }}" ]; then
@@ -41,32 +41,45 @@ jobs:
             echo "WORKDIR=target-app" >> $GITHUB_ENV
           fi
 
-      # =============================
-      # Checkout Pipeline Repo
-      # =============================
+      # ====================================
+      # Extract Target Repository Name
+      # ====================================
+      - name: Extract target repository name
+        run: |
+          if [ -z "${{ github.event.inputs.repo_url }}" ]; then
+            echo "TARGET_REPO=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+          else
+            REPO_URL="${{ github.event.inputs.repo_url }}"
+            REPO_NAME=$(basename -s .git "$REPO_URL")
+            echo "TARGET_REPO=$REPO_NAME" >> $GITHUB_ENV
+          fi
+
+      # ====================================
+      # Checkout Pipeline Repository
+      # ====================================
       - name: Checkout pipeline repository
         uses: actions/checkout@v4
 
-      # =============================
-      # Clone External Repo
-      # =============================
+      # ====================================
+      # Clone External Repository (if needed)
+      # ====================================
       - name: Clone external repository
         if: env.SCAN_MODE == 'EXTERNAL'
         run: |
           git clone -b ${{ github.event.inputs.repo_branch }} \
             ${{ github.event.inputs.repo_url }} target-app
 
-      # =============================
-      # Build Docker
-      # =============================
+      # ====================================
+      # Build Docker Image
+      # ====================================
       - name: Build Docker Image
         run: |
           cd "$WORKDIR"
           docker build -t "$IMAGE_NAME" .
 
-      # =============================
+      # ====================================
       # Trivy Scan
-      # =============================
+      # ====================================
       - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
@@ -75,9 +88,9 @@ jobs:
           output: trivy.json
         continue-on-error: true
 
-      # =============================
-      # Run App
-      # =============================
+      # ====================================
+      # Run Application
+      # ====================================
       - name: Create Docker Network
         run: docker network create zap-net
 
@@ -92,9 +105,9 @@ jobs:
       - name: Wait for Application
         run: sleep 30
 
-      # =============================
-      # ZAP Scan
-      # =============================
+      # ====================================
+      # OWASP ZAP Scan
+      # ====================================
       - name: OWASP ZAP Full Scan
         run: |
           docker run --rm \
@@ -107,9 +120,9 @@ jobs:
             -x zap.xml \
             -r zap.html || true
 
-      # =============================
-      # Python Setup
-      # =============================
+      # ====================================
+      # Setup Python
+      # ====================================
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -118,26 +131,27 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      # =============================
+      # ====================================
       # AI Analysis
-      # =============================
+      # ====================================
       - name: AI Security Analysis
         run: python ai_security_analysis.py
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
-      # =============================
-      # DefectDojo Upload
-      # =============================
+      # ====================================
+      # Upload to DefectDojo
+      # ====================================
       - name: Upload to DefectDojo
         run: python defectdojo_upload.py
         env:
           DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
           DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+          TARGET_REPO: ${{ env.TARGET_REPO }}
 
-      # =============================
+      # ====================================
       # Upload Artifacts
-      # =============================
+      # ====================================
       - name: Upload Security Reports
         uses: actions/upload-artifact@v4
         with:
