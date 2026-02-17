@@ -1,15 +1,9 @@
-name: Universal DevSecOps Pipeline
-# ==========================================
-# 1 PIPELINE – 2 MODES
-# - LOCAL     : push / pull_request
-# - EXTERNAL  : Run workflow + repo_url
-# ==========================================
+name: Universal DevSecOps Enterprise Pipeline
 
 on:
   push:
     branches: ["main"]
   pull_request:
-
   workflow_dispatch:
     inputs:
       repo_url:
@@ -20,21 +14,22 @@ on:
         required: false
         default: "main"
       app_port:
-        description: "Application port (default 8080)"
+        description: "Application port"
         required: false
+        default: "80"
 
 jobs:
   security:
     runs-on: ubuntu-latest
 
     env:
-      APP_PORT: ${{ github.event.inputs.app_port || '8080' }}
+      APP_PORT: ${{ github.event.inputs.app_port || '80' }}
       IMAGE_NAME: scanned-app
 
     steps:
-      # =====================================
-      # DETECT MODE
-      # =====================================
+      # ==========================
+      # Detect Mode
+      # ==========================
       - name: Detect scan mode
         run: |
           if [ -z "${{ github.event.inputs.repo_url }}" ]; then
@@ -45,34 +40,32 @@ jobs:
             echo "WORKDIR=target-app" >> $GITHUB_ENV
           fi
 
-      # =====================================
-      # CHECKOUT PIPELINE REPO (ALWAYS)
-      # =====================================
+      # ==========================
+      # Checkout pipeline repo
+      # ==========================
       - name: Checkout pipeline repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # =====================================
-      # CLONE EXTERNAL REPO (IF NEEDED)
-      # =====================================
+      # ==========================
+      # Clone external repo
+      # ==========================
       - name: Clone external repository
         if: env.SCAN_MODE == 'EXTERNAL'
         run: |
           git clone -b ${{ github.event.inputs.repo_branch }} \
             ${{ github.event.inputs.repo_url }} target-app
 
-      # =====================================
-      # BUILD DOCKER IMAGE
-      # =====================================
+      # ==========================
+      # Build Docker
+      # ==========================
       - name: Build Docker Image
         run: |
           cd $WORKDIR
           docker build -t $IMAGE_NAME .
 
-      # =====================================
-      # TRIVY (SCA / IMAGE)
-      # =====================================
+      # ==========================
+      # Trivy Scan
+      # ==========================
       - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
@@ -81,9 +74,9 @@ jobs:
           output: trivy.json
         continue-on-error: true
 
-      # =====================================
-      # RUN APPLICATION
-      # =====================================
+      # ==========================
+      # Run Application
+      # ==========================
       - name: Create Docker Network
         run: docker network create zap-net
 
@@ -96,15 +89,14 @@ jobs:
             $IMAGE_NAME
 
       - name: Wait for Application
-        run: sleep 40
+        run: sleep 30
 
-      # =====================================
-      # OWASP ZAP (DAST)
-      # =====================================
+      # ==========================
+      # ZAP Scan
+      # ==========================
       - name: OWASP ZAP Full Scan
         run: |
           docker run --rm \
-            --user root \
             --network zap-net \
             -v $(pwd):/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
@@ -113,9 +105,9 @@ jobs:
             -x zap.xml \
             -r zap.html || true
 
-      # =====================================
-      # AI SECURITY ANALYSIS (GROQ)
-      # =====================================
+      # ==========================
+      # AI Analysis
+      # ==========================
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -125,13 +117,100 @@ jobs:
         run: pip install requests
 
       - name: AI Security Analysis
-        run: python $GITHUB_WORKSPACE/ai_security_analysis.py
+        run: python ai_security_analysis.py
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
-      # =====================================
-      # ARTIFACTS
-      # =====================================
+      # ==========================
+      # DEFECTDOJO ENTERPRISE
+      # ==========================
+      - name: DefectDojo Integration
+        run: |
+          pip install requests
+
+          python <<EOF
+import requests, os, sys
+from datetime import date
+
+DD_URL = os.getenv("DEFECTDOJO_URL")
+DD_TOKEN = os.getenv("DEFECTDOJO_API_KEY")
+REPO = os.getenv("GITHUB_REPOSITORY")
+BUILD = os.getenv("GITHUB_RUN_NUMBER")
+
+headers = {"Authorization": f"Token {DD_TOKEN}"}
+
+# Create/Get Product
+product_name = REPO.replace("/", "_")
+r = requests.get(f"{DD_URL}/api/v2/products/?name={product_name}", headers=headers)
+if r.json()["count"] > 0:
+    product_id = r.json()["results"][0]["id"]
+else:
+    r = requests.post(f"{DD_URL}/api/v2/products/", headers=headers, json={
+        "name": product_name,
+        "description": f"Auto-created for {REPO}",
+        "prod_type": 1
+    })
+    product_id = r.json()["id"]
+
+# Create Engagement
+r = requests.post(f"{DD_URL}/api/v2/engagements/", headers=headers, json={
+    "name": f"CI Build {BUILD}",
+    "product": product_id,
+    "target_start": str(date.today()),
+    "target_end": str(date.today()),
+    "status": "In Progress",
+    "engagement_type": "CI/CD"
+})
+engagement_id = r.json()["id"]
+
+# Import Trivy
+if os.path.exists("trivy.json"):
+    requests.post(
+        f"{DD_URL}/api/v2/import-scan/",
+        headers=headers,
+        files={"file": open("trivy.json","rb")},
+        data={
+            "engagement": engagement_id,
+            "scan_type": "Trivy Scan",
+            "minimum_severity": "Low",
+            "active": True,
+            "verified": True
+        }
+    )
+
+# Import ZAP
+if os.path.exists("zap.xml"):
+    requests.post(
+        f"{DD_URL}/api/v2/import-scan/",
+        headers=headers,
+        files={"file": open("zap.xml","rb")},
+        data={
+            "engagement": engagement_id,
+            "scan_type": "ZAP Scan",
+            "minimum_severity": "Low",
+            "active": True,
+            "verified": True
+        }
+    )
+
+# Fail if Critical
+r = requests.get(
+    f"{DD_URL}/api/v2/findings/?severity=Critical&engagement={engagement_id}",
+    headers=headers
+)
+if r.json()["count"] > 0:
+    print("Critical findings detected.")
+    sys.exit(1)
+
+print("DefectDojo integration complete.")
+EOF
+        env:
+          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+
+      # ==========================
+      # Upload Artifacts
+      # ==========================
       - name: Upload Security Reports
         uses: actions/upload-artifact@v4
         with:
