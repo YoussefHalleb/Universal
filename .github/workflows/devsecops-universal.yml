@@ -200,7 +200,7 @@ r = requests.get(
 )
 if r.json()["count"] > 0:
     print("Critical findings detected.")
-    sys.exit(1)
+    sys.exit(1) 
 
 print("DefectDojo integration complete.")
 EOF
