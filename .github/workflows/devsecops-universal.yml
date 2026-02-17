@@ -1,4 +1,4 @@
-name: Universal DevSecOps Enterprise Pipeline
+name: Universal DevSecOps Enterprise Pipeline (Trivy + ZAP + AI + DefectDojo)
 
 on:
   push:
@@ -48,8 +48,8 @@ jobs:
 
       - name: Build Docker Image
         run: |
-          cd $WORKDIR
-          docker build -t $IMAGE_NAME .
+          cd "$WORKDIR"
+          docker build -t "$IMAGE_NAME" .
 
       - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@0.20.0
@@ -77,10 +77,10 @@ jobs:
         run: |
           docker run --rm \
             --network zap-net \
-            -v $(pwd):/zap/wrk \
+            -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
-            -t http://app-under-test:${APP_PORT} \
+            -t "http://app-under-test:${APP_PORT}" \
             -x zap.xml \
             -r zap.html || true
 
@@ -97,12 +97,15 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
-      # ===============================
-      # DEFECTDOJO SAFE VERSION
-      # ===============================
-      - name: Create DefectDojo script
+      # =====================================
+      # DEFECTDOJO (stable approach)
+      # =====================================
+      - name: Create DefectDojo uploader
         run: |
-          cat << 'PYTHON_SCRIPT' > defectdojo_upload.py
+          python - <<'PY'
+import base64, textwrap
+
+script = r"""
 import requests, os, sys
 from datetime import date
 
@@ -111,71 +114,95 @@ DD_TOKEN = os.getenv("DEFECTDOJO_API_KEY")
 REPO = os.getenv("GITHUB_REPOSITORY")
 BUILD = os.getenv("GITHUB_RUN_NUMBER")
 
-headers = {"Authorization": f"Token {DD_TOKEN}"}
-
-product_name = REPO.replace("/", "_")
-r = requests.get(f"{DD_URL}/api/v2/products/?name={product_name}", headers=headers)
-if r.json()["count"] > 0:
-    product_id = r.json()["results"][0]["id"]
-else:
-    r = requests.post(f"{DD_URL}/api/v2/products/", headers=headers, json={
-        "name": product_name,
-        "description": f"Auto-created for {REPO}",
-        "prod_type": 1
-    })
-    product_id = r.json()["id"]
-
-r = requests.post(f"{DD_URL}/api/v2/engagements/", headers=headers, json={
-    "name": f"CI Build {BUILD}",
-    "product": product_id,
-    "target_start": str(date.today()),
-    "target_end": str(date.today()),
-    "status": "In Progress",
-    "engagement_type": "CI/CD"
-})
-engagement_id = r.json()["id"]
-
-if os.path.exists("trivy.json"):
-    requests.post(
-        f"{DD_URL}/api/v2/import-scan/",
-        headers=headers,
-        files={"file": open("trivy.json","rb")},
-        data={
-            "engagement": engagement_id,
-            "scan_type": "Trivy Scan",
-            "minimum_severity": "Low",
-            "active": True,
-            "verified": True
-        }
-    )
-
-if os.path.exists("zap.xml"):
-    requests.post(
-        f"{DD_URL}/api/v2/import-scan/",
-        headers=headers,
-        files={"file": open("zap.xml","rb")},
-        data={
-            "engagement": engagement_id,
-            "scan_type": "ZAP Scan",
-            "minimum_severity": "Low",
-            "active": True,
-            "verified": True
-        }
-    )
-
-r = requests.get(
-    f"{DD_URL}/api/v2/findings/?severity=Critical&engagement={engagement_id}",
-    headers=headers
-)
-
-if r.json()["count"] > 0:
-    print("Critical findings detected.")
+if not DD_URL or not DD_TOKEN:
+    print("❌ Missing DEFECTDOJO_URL or DEFECTDOJO_API_KEY")
     sys.exit(1)
 
-print("DefectDojo integration complete.")
-PYTHON_SCRIPT
+headers = {"Authorization": f"Token {DD_TOKEN}"}
 
-      - name: Run DefectDojo Upload
+# 1) Get or create Product (prod_type=1 must exist in your DefectDojo)
+product_name = REPO.replace("/", "_")
+r = requests.get(f"{DD_URL}/api/v2/products/?name={product_name}", headers=headers, timeout=60)
+r.raise_for_status()
+
+if r.json().get("count", 0) > 0:
+    product_id = r.json()["results"][0]["id"]
+else:
+    r = requests.post(
+        f"{DD_URL}/api/v2/products/",
+        headers=headers,
+        json={
+            "name": product_name,
+            "description": f"Auto-created for {REPO}",
+            "prod_type": 1
+        },
+        timeout=60
+    )
+    r.raise_for_status()
+    product_id = r.json()["id"]
+
+# 2) Create Engagement
+r = requests.post(
+    f"{DD_URL}/api/v2/engagements/",
+    headers=headers,
+    json={
+        "name": f"CI Build {BUILD}",
+        "product": product_id,
+        "target_start": str(date.today()),
+        "target_end": str(date.today()),
+        "status": "In Progress",
+        "engagement_type": "CI/CD"
+    },
+    timeout=60
+)
+r.raise_for_status()
+engagement_id = r.json()["id"]
+
+# 3) Import scans
+def import_scan(scan_type, file_path):
+    if not os.path.exists(file_path):
+        print(f"⚠️ {file_path} not found, skipping {scan_type}")
+        return
+    with open(file_path, "rb") as f:
+        r = requests.post(
+            f"{DD_URL}/api/v2/import-scan/",
+            headers=headers,
+            files={"file": f},
+            data={
+                "engagement": engagement_id,
+                "scan_type": scan_type,
+                "minimum_severity": "Low",
+                "active": "true",
+                "verified": "true"
+            },
+            timeout=120
+        )
+        r.raise_for_status()
+        print(f"✅ Imported {scan_type} ({file_path})")
+
+import_scan("Trivy Scan", "trivy.json")
+import_scan("ZAP Scan", "zap.xml")
+
+# 4) Fail if Critical
+r = requests.get(
+    f"{DD_URL}/api/v2/findings/?severity=Critical&engagement={engagement_id}",
+    headers=headers,
+    timeout=60
+)
+r.raise_for_status()
+
+if r.json().get("count", 0) > 0:
+    print("❌ Critical findings detected. Failing pipeline.")
+    sys.exit(1)
+
+print("✅ DefectDojo integration complete.")
+"""
+
+open("defectdojo_upload.py", "w", encoding="utf-8").write(script)
+print("Created defectdojo_upload.py")
+PY
+
+      - name: Upload to DefectDojo
         run: python defectdojo_upload.py
         env:
           DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
