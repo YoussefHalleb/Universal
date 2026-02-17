@@ -4,24 +4,70 @@ on:
   push:
     branches: ["main"]
   pull_request:
+
   workflow_dispatch:
+    inputs:
+      repo_url:
+        description: "GitHub repository URL (leave empty for local repo)"
+        required: false
+      repo_branch:
+        description: "Git branch"
+        required: false
+        default: "main"
+      app_port:
+        description: "Application port"
+        required: false
+        default: "80"
 
 jobs:
   security:
     runs-on: ubuntu-latest
 
     env:
-      APP_PORT: 80
+      APP_PORT: ${{ github.event.inputs.app_port || '80' }}
       IMAGE_NAME: scanned-app
 
     steps:
-      - name: Checkout repository
+      # =============================
+      # Detect Mode
+      # =============================
+      - name: Detect scan mode
+        run: |
+          if [ -z "${{ github.event.inputs.repo_url }}" ]; then
+            echo "SCAN_MODE=LOCAL" >> $GITHUB_ENV
+            echo "WORKDIR=." >> $GITHUB_ENV
+          else
+            echo "SCAN_MODE=EXTERNAL" >> $GITHUB_ENV
+            echo "WORKDIR=target-app" >> $GITHUB_ENV
+          fi
+
+      # =============================
+      # Checkout Pipeline Repo
+      # =============================
+      - name: Checkout pipeline repository
         uses: actions/checkout@v4
 
-      - name: Build Docker Image
-        run: docker build -t $IMAGE_NAME .
+      # =============================
+      # Clone External Repo
+      # =============================
+      - name: Clone external repository
+        if: env.SCAN_MODE == 'EXTERNAL'
+        run: |
+          git clone -b ${{ github.event.inputs.repo_branch }} \
+            ${{ github.event.inputs.repo_url }} target-app
 
-      - name: Trivy Scan
+      # =============================
+      # Build Docker
+      # =============================
+      - name: Build Docker Image
+        run: |
+          cd "$WORKDIR"
+          docker build -t "$IMAGE_NAME" .
+
+      # =============================
+      # Trivy Scan
+      # =============================
+      - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}
@@ -29,6 +75,9 @@ jobs:
           output: trivy.json
         continue-on-error: true
 
+      # =============================
+      # Run App
+      # =============================
       - name: Create Docker Network
         run: docker network create zap-net
 
@@ -43,17 +92,23 @@ jobs:
       - name: Wait for Application
         run: sleep 30
 
-      - name: ZAP Scan
+      # =============================
+      # ZAP Scan
+      # =============================
+      - name: OWASP ZAP Full Scan
         run: |
           docker run --rm \
             --network zap-net \
-            -v $(pwd):/zap/wrk \
+            -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
             -t http://app-under-test:${APP_PORT} \
             -x zap.xml \
             -r zap.html || true
 
+      # =============================
+      # Python Setup
+      # =============================
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -62,13 +117,27 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
+      # =============================
+      # AI Analysis
+      # =============================
+      - name: AI Security Analysis
+        run: python ai_security_analysis.py
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+      # =============================
+      # DefectDojo Upload
+      # =============================
       - name: Upload to DefectDojo
         run: python defectdojo_upload.py
         env:
           DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
           DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
 
-      - name: Upload Artifacts
+      # =============================
+      # Upload Artifacts
+      # =============================
+      - name: Upload Security Reports
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
@@ -76,3 +145,4 @@ jobs:
             trivy.json
             zap.xml
             zap.html
+            ai_security_recommendations.md
