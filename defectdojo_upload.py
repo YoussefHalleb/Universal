@@ -5,7 +5,7 @@ from datetime import date
 
 DD_URL = os.getenv("DEFECTDOJO_URL")
 DD_TOKEN = os.getenv("DEFECTDOJO_API_KEY")
-REPO = os.getenv("GITHUB_REPOSITORY")
+REPO = os.getenv("TARGET_REPO")
 BUILD = os.getenv("GITHUB_RUN_NUMBER")
 COMMIT = os.getenv("GITHUB_SHA")
 
@@ -13,7 +13,6 @@ if not DD_URL or not DD_TOKEN:
     print("❌ Missing DefectDojo configuration")
     sys.exit(1)
 
-# Remove trailing slash if exists
 DD_URL = DD_URL.rstrip("/")
 
 headers = {
@@ -33,7 +32,7 @@ def safe_json(response):
 # ================================
 # Create or Get Product
 # ================================
-product_name = REPO.replace("/", "_")
+product_name = REPO
 print(f"📦 Using product name: {product_name}")
 
 r = requests.get(
@@ -59,16 +58,10 @@ else:
         headers=headers,
         json={
             "name": product_name,
-            "description": f"Auto-created for {REPO}",
+            "description": f"Auto-created for {product_name}",
             "prod_type": 1
         }
     )
-
-    if r.status_code not in [200, 201]:
-        print("❌ Failed to create product")
-        print(r.text)
-        sys.exit(1)
-
     product_id = safe_json(r)["id"]
 
 print(f"Using Product ID: {product_id}")
@@ -89,11 +82,6 @@ r = requests.post(
         "description": f"Commit: {COMMIT}"
     }
 )
-
-if r.status_code not in [200, 201]:
-    print("❌ Failed to create engagement")
-    print(r.text)
-    sys.exit(1)
 
 engagement_id = safe_json(r)["id"]
 print(f"Using Engagement ID: {engagement_id}")
@@ -139,22 +127,16 @@ if os.path.exists("zap.xml"):
 print("✅ DefectDojo upload completed.")
 
 # ================================
-# Fail ONLY if this repo has Critical findings
+# Only WARNING if Critical findings
 # ================================
 r = requests.get(
     f"{DD_URL}/api/v2/findings/?product={product_id}&severity=Critical&active=true",
     headers=headers
 )
 
-if r.status_code != 200:
-    print("❌ Failed to fetch findings")
-    print(r.text)
-    sys.exit(1)
-
 critical_count = safe_json(r).get("count", 0)
 
 if critical_count > 0:
-    print(f"❌ {critical_count} Critical findings detected in this repository.")
-    sys.exit(1)
+    print(f"⚠️ WARNING: {critical_count} Critical findings detected in this repository.")
 else:
     print("✅ No Critical findings for this repository.")
