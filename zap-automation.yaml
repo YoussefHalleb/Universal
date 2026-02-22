@@ -2,12 +2,12 @@ env:
   contexts:
     - name: AuthenticatedContext
       urls:
-        - http://app-under-test:80
+        - http://app-under-test:3000
       authentication:
         method: form
         parameters:
-          loginPageUrl: http://app-under-test:80/login
-          loginRequestUrl: http://app-under-test:80/login
+          loginPageUrl: http://app-under-test:3000/login
+          loginRequestUrl: http://app-under-test:3000/login
           loginRequestBody: username={%username%}&password={%password%}
       users:
         - name: testuser
