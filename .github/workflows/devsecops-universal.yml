@@ -115,7 +115,12 @@ jobs:
             --network zap-net \
             -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
-           zap.sh -cmd -autorun /zap/wrk/zap-automation.yaml || true
+           zap.sh -cmd \
+            -addoninstall ajaxSpider \
+            -addoninstall ascanrules \
+            -addoninstall pscanrules \
+            -addoninstall sqliplugin \
+            -autorun /zap/wrk/zap-automation.yaml || true
 
       # ====================================
       # Setup Python
