@@ -43,7 +43,7 @@ jobs:
       maxDuration: 10
 
   # IMPORTANT pour SPA comme Juice Shop
-  - type: ajaxSpider
+  - type: spiderAjax
     parameters:
       context: AuthenticatedContext
       user: testuser
