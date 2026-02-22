@@ -3,12 +3,26 @@ env:
     - name: AuthenticatedContext
       urls:
         - http://app-under-test:3000
+
+      includePaths:
+        - http://app-under-test:3000.*
+
+      excludePaths: []
+
+      sessionManagement:
+        method: cookie
+
       authentication:
         method: form
         parameters:
           loginPageUrl: http://app-under-test:3000/login
           loginRequestUrl: http://app-under-test:3000/login
           loginRequestBody: username={%username%}&password={%password%}
+        verification:
+          method: response
+          loggedInRegex: "Logout|Dashboard|Profile"
+          loggedOutRegex: "Login"
+
       users:
         - name: testuser
           credentials:
@@ -16,13 +30,20 @@ env:
             password: admin123
 
 jobs:
+
   - type: spider
     parameters:
       context: AuthenticatedContext
+      user: testuser
+      url: http://app-under-test:3000
+      maxDuration: 5
 
   - type: activeScan
     parameters:
       context: AuthenticatedContext
+      user: testuser
+      url: http://app-under-test:3000
+      maxDuration: 10
 
   - type: report
     parameters:
