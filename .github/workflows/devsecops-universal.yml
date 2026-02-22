@@ -117,6 +117,7 @@ jobs:
             ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
             -t http://app-under-test:${APP_PORT} \
+            -c zap-context.context \
             -x zap.xml \
             -r zap.html || true
 
