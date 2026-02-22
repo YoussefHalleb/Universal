@@ -116,7 +116,6 @@ jobs:
             -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
            zap.sh -cmd \
-            -addoninstall ajaxSpider \
             -addoninstall ascanrules \
             -addoninstall pscanrules \
             -addoninstall sqliplugin \
