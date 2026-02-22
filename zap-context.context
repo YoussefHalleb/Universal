@@ -1,0 +1,17 @@
+<context>
+  <authentication>
+    <method>formBasedAuthentication</method>
+    <loginUrl>http://app-under-test:80/login</loginUrl>
+    <loginRequestData>username={%username%}&password={%password%}</loginRequestData>
+  </authentication>
+
+  <users>
+    <user>
+      <name>testuser</name>
+      <credentials>
+        <username>admin</username>
+        <password>admin123</password>
+      </credentials>
+    </user>
+  </users>
+</context>
