@@ -1,40 +1,32 @@
-name: Juice Shop OWASP ZAP Scan
+name: Juice Shop ZAP Scan
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
   zap_scan:
     runs-on: ubuntu-latest
     steps:
+
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 1️⃣ Lancer Juice Shop
-      - name: Start Juice Shop container
+      - name: Start Juice Shop
         run: |
           docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop:latest
-          echo "Waiting 20s for Juice Shop to start..."
           sleep 20
 
-      # 2️⃣ Créer le contexte ZAP pour le login (script inline)
-      - name: Create ZAP Context with Login
+      - name: Create ZAP context with login
         run: |
           cat <<EOF > zap_login.context
           {
-            "context": {
-              "name": "JuiceShopContext"
-            },
+            "context": {"name": "JuiceShopContext"},
             "users": [
               {
                 "name": "admin",
-                "credentials": {
-                  "email": "admin@juice-sh.op",
-                  "password": "admin123"
-                }
+                "credentials": {"email":"admin@juice-sh.op","password":"admin123"}
               }
             ],
             "authentication": {
@@ -46,10 +38,10 @@ jobs:
           }
           EOF
 
-      # 3️⃣ Lancer le scan ZAP avec login et --user root
-      - name: Run OWASP ZAP Full Scan
+      - name: Run OWASP ZAP scan
         run: |
-          docker run --rm --user root -v $(pwd)/zap_reports:/zap/wrk/ owasp/zap2docker-stable \
+          docker run --rm --user root -v "$(pwd)/zap_reports:/zap/wrk" \
+            ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
             -t http://host.docker.internal:3000 \
             -t http://host.docker.internal:3000/rest/user \
@@ -57,8 +49,7 @@ jobs:
             -r zap_report.html \
             -J zap_report.json
 
-      # 4️⃣ Upload des rapports
-      - name: Upload ZAP report
+      - name: Upload ZAP reports
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
