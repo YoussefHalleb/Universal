@@ -1,0 +1,37 @@
+env:
+  contexts:
+    - name: AuthenticatedContext
+      urls:
+        - http://app-under-test:80
+      authentication:
+        method: form
+        parameters:
+          loginPageUrl: http://app-under-test:80/login
+          loginRequestUrl: http://app-under-test:80/login
+          loginRequestBody: username={%username%}&password={%password%}
+      users:
+        - name: testuser
+          credentials:
+            username: admin
+            password: admin123
+
+jobs:
+  - type: spider
+    parameters:
+      context: AuthenticatedContext
+
+  - type: activeScan
+    parameters:
+      context: AuthenticatedContext
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk
+      reportFile: zap.html
+
+  - type: report
+    parameters:
+      template: traditional-xml
+      reportDir: /zap/wrk
+      reportFile: zap.xml
