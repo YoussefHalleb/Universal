@@ -1,0 +1,65 @@
+name: Juice Shop OWASP ZAP Scan
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  zap_scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      # 1️⃣ Lancer Juice Shop
+      - name: Start Juice Shop container
+        run: |
+          docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop:latest
+          echo "Waiting 20s for Juice Shop to start..."
+          sleep 20
+
+      # 2️⃣ Créer le contexte ZAP pour le login (script inline)
+      - name: Create ZAP Context with Login
+        run: |
+          cat <<EOF > zap_login.context
+          {
+            "context": {
+              "name": "JuiceShopContext"
+            },
+            "users": [
+              {
+                "name": "admin",
+                "credentials": {
+                  "email": "admin@juice-sh.op",
+                  "password": "admin123"
+                }
+              }
+            ],
+            "authentication": {
+              "method": "form",
+              "loginPageUrl": "http://localhost:3000/#/login",
+              "loginRequestUrl": "http://localhost:3000/rest/user/login",
+              "loginRequestBody": "{\"email\":\"admin@juice-sh.op\",\"password\":\"admin123\"}"
+            }
+          }
+          EOF
+
+      # 3️⃣ Lancer le scan ZAP avec login et --user root
+      - name: Run OWASP ZAP Full Scan
+        run: |
+          docker run --rm --user root -v $(pwd)/zap_reports:/zap/wrk/ owasp/zap2docker-stable \
+            zap-full-scan.py \
+            -t http://host.docker.internal:3000 \
+            -t http://host.docker.internal:3000/rest/user \
+            -c /zap/wrk/zap_login.context \
+            -r zap_report.html \
+            -J zap_report.json
+
+      # 4️⃣ Upload des rapports
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@v3
+        with:
+          name: zap-report
+          path: zap_reports/
