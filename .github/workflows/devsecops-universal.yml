@@ -115,11 +115,7 @@ jobs:
             --network zap-net \
             -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py \
-            -t http://app-under-test:${APP_PORT} \
-            -c zap-context.context \
-            -x zap.xml \
-            -r zap.html || true
+           zap.sh -cmd -autorun /zap/wrk/zap-automation.yaml || true
 
       # ====================================
       # Setup Python
