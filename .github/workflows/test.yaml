@@ -1,4 +1,4 @@
-name: OWASP ZAP Authenticated Scan - Juice Shop
+name: OWASP ZAP Full Authenticated Scan - Juice Shop
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
           echo "Waiting for Juice Shop..."
           sleep 40
 
-      # 4️⃣ Create ZAP Automation Plan
+      # 4️⃣ Create ZAP Automation Plan (Authenticated + AJAX)
       - name: Create ZAP Automation Plan
         run: |
           mkdir -p zap_reports
@@ -69,14 +69,41 @@ jobs:
 
           jobs:
 
+            # Spider classique
             - type: spider
               name: Auth Spider
               parameters:
                 context: JuiceShopContext
                 user: admin
                 url: http://juice-shop:3000
-                maxDuration: 5
+                maxDepth: 10
 
+            # AJAX Spider (important pour SPA)
+            - type: spiderAjax
+              name: AJAX Spider
+              parameters:
+                context: JuiceShopContext
+                user: admin
+                url: http://juice-shop:3000
+                maxDuration: 20
+
+            - type: forcedBrowse
+              name: Forced Browse
+              parameters:
+                context: JuiceShopContext
+                user: admin
+
+            # Attendre la fin du passive scan
+            - type: passiveScan-wait
+              name: Wait Passive Scan
+
+            - type: activeScan-config
+              name: Configure Active Scan
+              parameters:
+                maxRuleDurationInMins: 5
+                maxScanDurationInMins: 30
+
+            # Active Scan authentifié
             - type: activeScan
               name: Auth Active Scan
               parameters:
@@ -84,6 +111,7 @@ jobs:
                 user: admin
                 
 
+            # HTML Report
             - type: report
               name: HTML Report
               parameters:
@@ -91,6 +119,7 @@ jobs:
                 reportDir: /zap/wrk
                 reportFile: zap_report.html
 
+            # JSON Report
             - type: report
               name: JSON Report
               parameters:
@@ -99,7 +128,7 @@ jobs:
                 reportFile: zap_report.json
           EOF
 
-      # 5️⃣ Run ZAP scan (same network)
+      # 5️⃣ Run ZAP scan
       - name: Run ZAP Authenticated Scan
         run: |
           docker run --rm \
@@ -123,4 +152,5 @@ jobs:
         if: always()
         run: |
           docker stop juice-shop || true
+          docker rm juice-shop || true
           docker network rm zapnet || true
