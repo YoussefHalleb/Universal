@@ -4,8 +4,9 @@ on:
   push:
     branches: ["main"]
   pull_request:
+
   workflow_dispatch:
-    inputs: 
+    inputs:
       repo_url:
         description: "GitHub repository URL (leave empty for local repo)"
         required: false
@@ -14,26 +15,22 @@ on:
         required: false
         default: "main"
       app_port:
-        description: "Application port (host port)"
+        description: "Application port"
         required: false
-        default: "5000"
+        default: "80"
 
 jobs:
   security:
     runs-on: ubuntu-latest
 
     env:
-      APP_PORT: ${{ github.event.inputs.app_port || '5000' }}
-      APP_INTERNAL_PORT: "5000"
+      APP_PORT: ${{ github.event.inputs.app_port || '80' }}
       IMAGE_NAME: scanned-app
 
-      # From docker-compose.yml
-      APP_SERVICE: "vuln-nodejs"
-
-      # Targets inside docker network
-      TARGET_BASE: "http://vuln-nodejs:5000"
-
     steps:
+      # ====================================
+      # Detect Scan Mode
+      # ====================================
       - name: Detect scan mode
         run: |
           if [ -z "${{ github.event.inputs.repo_url }}" ]; then
@@ -43,7 +40,9 @@ jobs:
             echo "SCAN_MODE=EXTERNAL" >> $GITHUB_ENV
             echo "WORKDIR=target-app" >> $GITHUB_ENV
           fi
-
+      # ====================================
+      # Extract Target Repository Name
+      # ====================================
       - name: Extract target repository name
         run: |
           if [ -z "${{ github.event.inputs.repo_url }}" ]; then
@@ -53,21 +52,30 @@ jobs:
             REPO_NAME=$(basename -s .git "$REPO_URL")
             echo "TARGET_REPO=$REPO_NAME" >> $GITHUB_ENV
           fi
-
+      # ====================================
+      # Checkout Pipeline Repository
+      # ====================================
       - name: Checkout pipeline repository
         uses: actions/checkout@v4
 
+      # ====================================
+      # Clone External Repository (if needed)
+      # ====================================
       - name: Clone external repository
         if: env.SCAN_MODE == 'EXTERNAL'
         run: |
           git clone -b ${{ github.event.inputs.repo_branch }} \
             ${{ github.event.inputs.repo_url }} target-app
-
-      - name: Build Docker Image (for Trivy)
+      # ====================================
+      # Build Docker Image
+      # ====================================
+      - name: Build Docker Image
         run: |
           cd "$WORKDIR"
           docker build -t "$IMAGE_NAME" .
-
+      # ====================================
+      # Trivy Scan
+      # ====================================
       - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
@@ -76,149 +84,40 @@ jobs:
           output: trivy.json
         continue-on-error: true
 
-      - name: Ensure .env exists (compose requires it)
+      # ====================================
+      # Run Application
+      # ====================================
+      - name: Create Docker Network
+        run: docker network create zap-net
+
+      - name: Run Application
         run: |
-          cd "$WORKDIR"
-          if [ ! -f .env ]; then
-            cat > .env <<'EOF'
-NODE_ENV=development
-PORT=5000
-EOF
-          fi
+          docker run -d \
+            --name app-under-test \
+            --network zap-net \
+            -p ${APP_PORT}:${APP_PORT} \
+            $IMAGE_NAME
+      - name: Wait for Application
+        run: sleep 30
 
-      - name: Run Application (docker compose)
-        run: |
-          cd "$WORKDIR"
-          docker compose up -d --build
-
-      - name: Show running containers
-        run: docker ps -a
-
-      - name: Get docker-compose network
-        run: |
-          cd "$WORKDIR"
-          NET=$(docker network ls --format '{{.Name}}' | grep "_default$" | head -n 1)
-          if [ -z "$NET" ]; then
-            echo "Could not detect compose network automatically"
-            docker network ls
-            exit 1
-          fi
-          echo "ZAP_NET=$NET" >> $GITHUB_ENV
-          echo "Using network: $NET"
-
-      - name: Wait for Application (HTTP check from compose network)
-        run: |
-          for i in {1..50}; do
-            code=$(docker run --rm --network "$ZAP_NET" curlimages/curl:8.5.0 \
-              -s -o /dev/null -w "%{http_code}" "$TARGET_BASE" || true)
-            if echo "$code" | grep -qE "200|302|401|403"; then
-              echo "App is up (HTTP $code)"
-              exit 0
-            fi
-            echo "Waiting for app... (got $code)"
-            docker logs --tail 80 "$APP_SERVICE" || true
-            sleep 3
-          done
-          echo "App did not become ready in time"
-          docker logs "$APP_SERVICE" || true
-          exit 1
-
-      - name: Detect Swagger JSON URL (auto)
-        run: |
-          set -e
-          CANDIDATES=(
-            "http://vuln-nodejs:5000/api-docs/swagger.json"
-            "http://vuln-nodejs:5000/swagger.json"
-            "http://vuln-nodejs:5000/api-docs.json"
-            "http://vuln-nodejs:5000/v1/api-docs"
-            "http://vuln-nodejs:5000/api-docs/v1/swagger.json"
-          )
-
-          FOUND=""
-          for u in "${CANDIDATES[@]}"; do
-            code=$(docker run --rm --network "$ZAP_NET" curlimages/curl:8.5.0 \
-              -s -o /dev/null -w "%{http_code}" "$u" || true)
-            echo "$u -> $code"
-            if [ "$code" = "200" ]; then
-              FOUND="$u"
-              break
-            fi
-          done
-
-          if [ -z "$FOUND" ]; then
-            echo "Could not find swagger.json automatically."
-            echo "Dumping /api-docs first lines for debugging:"
-            docker run --rm --network "$ZAP_NET" curlimages/curl:8.5.0 \
-              -sS "http://vuln-nodejs:5000/api-docs" | head -n 80 || true
-            exit 1
-          fi
-
-          echo "TARGET_SWAGGER_JSON=$FOUND" >> $GITHUB_ENV
-          echo "Found swagger.json at: $FOUND"
-
-      - name: Create ZAP Automation Plan
-        run: |
-          cat > zap-plan.yaml <<'EOF'
-env:
-  contexts:
-    - name: target
-      urls:
-        - http://vuln-nodejs:5000
-      includePaths:
-        - http://vuln-nodejs:5000.*
-
-jobs:
-  - type: openapi
-    parameters:
-      context: target
-      apiUrl: __SWAGGER_JSON__
-
-  - type: spider
-    parameters:
-      context: target
-      maxDuration: 10
-
-  - type: passiveScan-wait
-    parameters:
-      maxDuration: 10
-
-  - type: activeScan
-    parameters:
-      context: target
-      policy: Default Policy
-
-  - type: report
-    parameters:
-      reportDir: /zap/wrk
-      reportFile: zap.html
-      reportTitle: "ZAP Full Scan Report"
-      template: traditional-html
-
-  - type: report
-    parameters:
-      reportDir: /zap/wrk
-      reportFile: zap.xml
-      template: traditional-xml
-EOF
-          # Replace placeholder with the detected Swagger URL
-          sed -i "s|__SWAGGER_JSON__|${TARGET_SWAGGER_JSON}|g" zap-plan.yaml
-
-      - name: OWASP ZAP Automation Scan (Full)
+      # ====================================
+      # OWASP ZAP Scan
+      # ====================================
+      - name: OWASP ZAP Full Scan
         run: |
           docker run --rm \
             --user root \
-            --network "$ZAP_NET" \
+            --network zap-net \
             -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap.sh -cmd -autorun /zap/wrk/zap-plan.yaml || true
-
-      - name: Debug - list generated files
-        run: |
-          ls -lah
-          echo "----"
-          test -f zap.xml && echo "zap.xml exists" || echo "zap.xml missing"
-          test -f zap.html && echo "zap.html exists" || echo "zap.html missing"
-
+            zap-full-scan.py \
+            -t http://app-under-test:${APP_PORT} \
+            -c zap-context.context \
+            -x zap.xml \
+            -r zap.html || true
+      # ====================================
+      # Setup Python
+      # ====================================
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -227,11 +126,17 @@ EOF
       - name: Install dependencies
         run: pip install requests
 
+      # ====================================
+      # AI Analysis
+      # ====================================
       - name: AI Security Analysis
         run: python ai_security_analysis.py
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }} 
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
+      # ====================================
+      # Upload to DefectDojo
+      # ====================================
       - name: Upload to DefectDojo
         run: python defectdojo_upload.py
         env:
@@ -239,6 +144,9 @@ EOF
           DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
           TARGET_REPO: ${{ env.TARGET_REPO }}
 
+      # ====================================
+      # Upload Artifacts
+      # ====================================
       - name: Upload Security Reports
         uses: actions/upload-artifact@v4
         with:
