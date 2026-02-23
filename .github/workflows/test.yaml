@@ -82,7 +82,7 @@ jobs:
               parameters:
                 context: JuiceShopContext
                 user: admin
-                maxDuration: 10
+                
 
             - type: report
               name: HTML Report
