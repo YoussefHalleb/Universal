@@ -106,7 +106,7 @@ jobs:
         run: sleep 30
 
       # ====================================
-      # OWASP ZAP Scan
+      # OWASP ZAP Full Scan (Direct)
       # ====================================
       - name: OWASP ZAP Full Scan
         run: |
@@ -115,11 +115,10 @@ jobs:
             --network zap-net \
             -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
-           zap.sh -cmd \
-            -addoninstall ascanrules \
-            -addoninstall pscanrules \
-            -addoninstall sqliplugin \
-            -autorun /zap/wrk/zap-automation.yaml || true
+            zap-full-scan.py \
+            -t http://app-under-test:${APP_PORT} \
+            -r zap.html \
+            -x zap.xml || true
 
       # ====================================
       # Setup Python
