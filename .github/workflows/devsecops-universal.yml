@@ -17,14 +17,14 @@ on:
       app_port:
         description: "Application port"
         required: false
-        default: "80"
+        default: "3000"
 
 jobs:
   security:
     runs-on: ubuntu-latest
 
     env:
-      APP_PORT: ${{ github.event.inputs.app_port || '80' }}
+      APP_PORT: ${{ github.event.inputs.app_port || '3000' }}
       IMAGE_NAME: scanned-app
 
     steps:
