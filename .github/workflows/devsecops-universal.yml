@@ -89,6 +89,17 @@ jobs:
           output: trivy.json
         continue-on-error: true
 
+
+
+      - name: Ensure .env exists
+        run: |
+          cd "$WORKDIR"
+          if [ ! -f .env ]; then
+            echo "Creating missing .env..."
+            touch .env
+          fi
+
+
       # ====================================
       # Run Application (use docker-compose provided by the app repo)
       # ====================================
