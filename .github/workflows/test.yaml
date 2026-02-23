@@ -1,4 +1,4 @@
-name: Juice Shop OWASP ZAP Authenticated Scan
+name: OWASP ZAP Authenticated Scan - Juice Shop
 
 on:
   push:
@@ -15,19 +15,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2️⃣ Create Docker network
+      - name: Create Docker network
+        run: docker network create zapnet
 
-      # 2️⃣ Start Juice Shop
+      # 3️⃣ Start Juice Shop container
       - name: Start Juice Shop
         run: |
-          docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop
+          docker run -d \
+            --name juice-shop \
+            --network zapnet \
+            -p 3000:3000 \
+            bkimminich/juice-shop:latest
+
           echo "Waiting for Juice Shop..."
           sleep 40
 
-
-      # 3️⃣ Create ZAP automation plan (AUTHENTICATED)
-      - name: Create Automation Plan
+      # 4️⃣ Create ZAP Automation Plan
+      - name: Create ZAP Automation Plan
         run: |
-
           mkdir -p zap_reports
 
           cat <<EOF > zap_reports/zap_plan.yaml
@@ -35,17 +41,18 @@ jobs:
             contexts:
               - name: JuiceShopContext
                 urls:
-                  - http://host.docker.internal:3000
+                  - http://juice-shop:3000
 
                 authentication:
                   method: json
                   parameters:
-                    loginRequestUrl: http://host.docker.internal:3000/rest/user/login
+                    loginRequestUrl: http://juice-shop:3000/rest/user/login
                     loginRequestBody: '{"email":"admin@juice-sh.op","password":"admin123"}'
+
                   verification:
-                      method: response
-                      loggedInRegex: token
-                      loggedOutRegex: Invalid
+                    method: response
+                    loggedInRegex: token
+                    loggedOutRegex: Invalid
 
                 sessionManagement:
                   method: cookie
@@ -58,50 +65,62 @@ jobs:
 
             parameters:
               failOnError: false
+              progressToStdout: true
 
           jobs:
 
             - type: spider
+              name: Auth Spider
               parameters:
                 context: JuiceShopContext
                 user: admin
-                url: http://host.docker.internal:3000
+                url: http://juice-shop:3000
+                maxDuration: 5
 
             - type: activeScan
+              name: Auth Active Scan
               parameters:
                 context: JuiceShopContext
                 user: admin
+                maxDuration: 10
 
             - type: report
+              name: HTML Report
               parameters:
                 template: traditional-html
                 reportDir: /zap/wrk
                 reportFile: zap_report.html
 
             - type: report
+              name: JSON Report
               parameters:
                 template: traditional-json
                 reportDir: /zap/wrk
                 reportFile: zap_report.json
           EOF
 
-
-      # 4️⃣ Run ZAP automation framework
-      - name: Run ZAP authenticated scan
+      # 5️⃣ Run ZAP scan (same network)
+      - name: Run ZAP Authenticated Scan
         run: |
-
           docker run --rm \
             --user root \
+            --network zapnet \
             -v "$(pwd)/zap_reports:/zap/wrk" \
             ghcr.io/zaproxy/zaproxy:stable \
             zap.sh \
             -cmd \
             -autorun /zap/wrk/zap_plan.yaml
 
-
-      # 5️⃣ Upload reports
+      # 6️⃣ Upload reports
       - name: Upload reports
         uses: actions/upload-artifact@v4
         with:
           name: zap-auth-report
           path: zap_reports/
+
+      # 7️⃣ Cleanup
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop juice-shop || true
+          docker network rm zapnet || true
