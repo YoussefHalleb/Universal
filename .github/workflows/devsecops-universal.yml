@@ -230,7 +230,7 @@ EOF
       - name: AI Security Analysis
         run: python ai_security_analysis.py
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }} 
 
       - name: Upload to DefectDojo
         run: python defectdojo_upload.py
