@@ -24,9 +24,19 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      APP_PORT: ${{ github.event.inputs.app_port || '5000' }}   # host port
-      APP_INTERNAL_PORT: "5000"                                 # container port (from docker-compose)
+      APP_PORT: ${{ github.event.inputs.app_port || '5000' }}
+      APP_INTERNAL_PORT: "5000"
       IMAGE_NAME: scanned-app
+
+      # From docker-compose.yml
+      APP_SERVICE: "vuln-nodejs"
+
+      # Targets inside docker network
+      TARGET_BASE: "http://vuln-nodejs:5000"
+
+      # Many Swagger setups expose swagger.json via /api-docs/swagger.json
+      # If your app exposes it differently, change this.
+      TARGET_SWAGGER_JSON: "http://vuln-nodejs:5000/api-docs/swagger.json"
 
     steps:
       # ====================================
@@ -89,67 +99,165 @@ jobs:
           output: trivy.json
         continue-on-error: true
 
-
-
+      # ====================================
+      # Ensure .env exists (compose requires it)
+      # ====================================
       - name: Ensure .env exists
         run: |
           cd "$WORKDIR"
           if [ ! -f .env ]; then
-            echo "Creating missing .env..."
-            touch .env
+            cat > .env <<'EOF'
+NODE_ENV=development
+PORT=5000
+EOF
           fi
 
-
       # ====================================
-      # Run Application (use docker-compose provided by the app repo)
+      # Run Application (docker compose)
       # ====================================
       - name: Run Application (docker compose)
         run: |
           cd "$WORKDIR"
           docker compose up -d --build
 
+      - name: Show running containers
+        run: docker ps -a
+
+      # ====================================
+      # Get docker-compose network
+      # ====================================
       - name: Get docker-compose network
         run: |
           cd "$WORKDIR"
-          # Compose default network usually ends with "_default"
           NET=$(docker network ls --format '{{.Name}}' | grep "_default$" | head -n 1)
+          if [ -z "$NET" ]; then
+            echo "Could not detect compose network automatically"
+            docker network ls
+            exit 1
+          fi
           echo "ZAP_NET=$NET" >> $GITHUB_ENV
           echo "Using network: $NET"
 
-      - name: Wait for Application (HTTP check from compose network)
+      # ====================================
+      # Wait for Application (real HTTP check)
+      # ====================================
+      - name: Wait for Application
         run: |
-          for i in {1..40}; do
+          for i in {1..50}; do
             code=$(docker run --rm --network "$ZAP_NET" curlimages/curl:8.5.0 \
-              -s -o /dev/null -w "%{http_code}" http://vuln-nodejs:${APP_INTERNAL_PORT} || true)
+              -s -o /dev/null -w "%{http_code}" "$TARGET_BASE" || true)
             if echo "$code" | grep -qE "200|302|401|403"; then
               echo "App is up (HTTP $code)"
               exit 0
             fi
             echo "Waiting for app... (got $code)"
-            docker logs --tail 50 vuln-nodejs || true
+            docker logs --tail 80 "$APP_SERVICE" || true
             sleep 3
           done
           echo "App did not become ready in time"
-          docker logs vuln-nodejs || true
+          docker logs "$APP_SERVICE" || true
           exit 1
 
       # ====================================
-      # OWASP ZAP Full Scan
+      # Find swagger.json automatically (robust)
       # ====================================
-      - name: OWASP ZAP Full Scan
+      - name: Detect Swagger JSON URL
+        run: |
+          set -e
+          echo "Checking swagger.json candidates..."
+          CANDIDATES=(
+            "http://vuln-nodejs:5000/api-docs/swagger.json"
+            "http://vuln-nodejs:5000/swagger.json"
+            "http://vuln-nodejs:5000/api-docs.json"
+            "http://vuln-nodejs:5000/v1/api-docs"
+            "http://vuln-nodejs:5000/api-docs/v1/swagger.json"
+          )
+          FOUND=""
+          for u in "${CANDIDATES[@]}"; do
+            code=$(docker run --rm --network "$ZAP_NET" curlimages/curl:8.5.0 \
+              -s -o /dev/null -w "%{http_code}" "$u" || true)
+            echo "$u -> $code"
+            if echo "$code" | grep -qE "200"; then
+              FOUND="$u"
+              break
+            fi
+          done
+          if [ -z "$FOUND" ]; then
+            echo "Could not find swagger.json automatically. Printing /api-docs HTML head:"
+            docker run --rm --network "$ZAP_NET" curlimages/curl:8.5.0 \
+              -sS "http://vuln-nodejs:5000/api-docs" | head -n 60 || true
+            exit 1
+          fi
+          echo "TARGET_SWAGGER_JSON=$FOUND" >> $GITHUB_ENV
+          echo "Found swagger.json at: $FOUND"
+
+      # ====================================
+      # Create ZAP Automation Plan (OpenAPI import + spider + active scan + reports)
+      # ====================================
+      - name: Create ZAP Automation Plan
+        run: |
+          cat > zap-plan.yaml <<EOF
+env:
+  contexts:
+    - name: target
+      urls:
+        - ${TARGET_BASE}
+      includePaths:
+        - ${TARGET_BASE}.*
+      # You can add excludePaths if needed.
+
+jobs:
+  - type: openapi
+    parameters:
+      context: target
+      apiUrl: ${TARGET_SWAGGER_JSON}
+
+  - type: spider
+    parameters:
+      context: target
+      maxDuration: 10
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+
+  - type: activeScan
+    parameters:
+      context: target
+      policy: Default Policy
+
+  - type: report
+    parameters:
+      reportDir: /zap/wrk
+      reportFile: zap.html
+      reportTitle: "ZAP Full Scan Report"
+      template: traditional-html
+
+  - type: report
+    parameters:
+      reportDir: /zap/wrk
+      reportFile: zap.xml
+      template: traditional-xml
+EOF
+
+      # ====================================
+      # Run ZAP Automation Scan
+      # ====================================
+      - name: OWASP ZAP Automation Scan (Full)
         run: |
           docker run --rm \
             --user root \
             --network "$ZAP_NET" \
             -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py \
-            -t http://vuln-nodejs:${APP_INTERNAL_PORT} \
-            -r zap.html \
-            -x zap.xml || true
+            zap.sh -cmd -autorun /zap/wrk/zap-plan.yaml || true
 
       - name: Debug - list generated files
-        run: ls -lah
+        run: |
+          ls -lah
+          echo "----"
+          test -f zap.xml && echo "zap.xml exists" || echo "zap.xml missing"
+          test -f zap.html && echo "zap.html exists" || echo "zap.html missing"
 
       # ====================================
       # Setup Python
