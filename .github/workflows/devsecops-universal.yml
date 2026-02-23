@@ -15,16 +15,17 @@ on:
         required: false
         default: "main"
       app_port:
-        description: "Application port"
+        description: "Application port (host port)"
         required: false
-        default: "3000"
+        default: "5000"
 
 jobs:
   security:
     runs-on: ubuntu-latest
 
     env:
-      APP_PORT: ${{ github.event.inputs.app_port || '3000' }}
+      APP_PORT: ${{ github.event.inputs.app_port || '5000' }}   # host port
+      APP_INTERNAL_PORT: "5000"                                 # container port (from docker-compose)
       IMAGE_NAME: scanned-app
 
     steps:
@@ -70,7 +71,7 @@ jobs:
             ${{ github.event.inputs.repo_url }} target-app
 
       # ====================================
-      # Build Docker Image
+      # Build Docker Image (for Trivy)
       # ====================================
       - name: Build Docker Image
         run: |
@@ -89,36 +90,55 @@ jobs:
         continue-on-error: true
 
       # ====================================
-      # Run Application
+      # Run Application (use docker-compose provided by the app repo)
       # ====================================
-      - name: Create Docker Network
-        run: docker network create zap-net
-
-      - name: Run Application
+      - name: Run Application (docker compose)
         run: |
-          docker run -d \
-            --name app-under-test \
-            --network zap-net \
-            -p ${APP_PORT}:${APP_PORT} \
-            $IMAGE_NAME
+          cd "$WORKDIR"
+          docker compose up -d --build
 
-      - name: Wait for Application
-        run: sleep 30
+      - name: Get docker-compose network
+        run: |
+          cd "$WORKDIR"
+          # Compose default network usually ends with "_default"
+          NET=$(docker network ls --format '{{.Name}}' | grep "_default$" | head -n 1)
+          echo "ZAP_NET=$NET" >> $GITHUB_ENV
+          echo "Using network: $NET"
+
+      - name: Wait for Application (HTTP check from compose network)
+        run: |
+          for i in {1..40}; do
+            code=$(docker run --rm --network "$ZAP_NET" curlimages/curl:8.5.0 \
+              -s -o /dev/null -w "%{http_code}" http://vuln-nodejs:${APP_INTERNAL_PORT} || true)
+            if echo "$code" | grep -qE "200|302|401|403"; then
+              echo "App is up (HTTP $code)"
+              exit 0
+            fi
+            echo "Waiting for app... (got $code)"
+            docker logs --tail 50 vuln-nodejs || true
+            sleep 3
+          done
+          echo "App did not become ready in time"
+          docker logs vuln-nodejs || true
+          exit 1
 
       # ====================================
-      # OWASP ZAP Full Scan (Direct)
+      # OWASP ZAP Full Scan
       # ====================================
       - name: OWASP ZAP Full Scan
         run: |
           docker run --rm \
             --user root \
-            --network zap-net \
+            --network "$ZAP_NET" \
             -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
-            -t http://app-under-test:${APP_PORT} \
+            -t http://vuln-nodejs:${APP_INTERNAL_PORT} \
             -r zap.html \
             -x zap.xml || true
+
+      - name: Debug - list generated files
+        run: ls -lah
 
       # ====================================
       # Setup Python
