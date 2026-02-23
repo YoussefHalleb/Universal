@@ -1,9 +1,8 @@
-name: Juice Shop OWASP ZAP Scan
+name: Juice Shop OWASP ZAP Authenticated Scan
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -11,59 +10,98 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # 1️⃣ Checkout repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Start Juice Shop container
+
+      # 2️⃣ Start Juice Shop
       - name: Start Juice Shop
         run: |
-          docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop:latest
-          echo "Waiting for Juice Shop to start..."
-          sleep 25
+          docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop
+          echo "Waiting for Juice Shop..."
+          sleep 40
 
-      # 3️⃣ Prepare ZAP context (LOGIN)
-      - name: Prepare ZAP files
+
+      # 3️⃣ Create ZAP automation plan (AUTHENTICATED)
+      - name: Create Automation Plan
         run: |
+
           mkdir -p zap_reports
 
-          cat <<EOF > zap_reports/zap_login.context
-          {
-            "context": {"name": "JuiceShopContext"},
-            "users": [
-              {
-                "name": "admin",
-                "credentials": {
-                  "email": "admin@juice-sh.op",
-                  "password": "admin123"
-                }
-              }
-            ],
-            "authentication": {
-              "method": "form",
-              "loginPageUrl": "http://host.docker.internal:3000/#/login",
-              "loginRequestUrl": "http://host.docker.internal:3000/rest/user/login",
-              "loginRequestBody": "{\"email\":\"admin@juice-sh.op\",\"password\":\"admin123\"}"
-            }
-          }
+          cat <<EOF > zap_reports/zap_plan.yaml
+          env:
+            contexts:
+              - name: JuiceShopContext
+                urls:
+                  - http://host.docker.internal:3000
+
+                authentication:
+                  method: json
+                  parameters:
+                    loginRequestUrl: http://host.docker.internal:3000/rest/user/login
+                    loginRequestBody: '{"email":"admin@juice-sh.op","password":"admin123"}'
+                  verification:
+                    method: response
+                    loggedInRegex: '"authentication":\s*{'
+                    loggedOutRegex: 'Invalid'
+
+                sessionManagement:
+                  method: cookie
+
+                users:
+                  - name: admin
+                    credentials:
+                      email: admin@juice-sh.op
+                      password: admin123
+
+            parameters:
+              failOnError: false
+
+          jobs:
+
+            - type: spider
+              parameters:
+                context: JuiceShopContext
+                user: admin
+                url: http://host.docker.internal:3000
+
+            - type: activeScan
+              parameters:
+                context: JuiceShopContext
+                user: admin
+
+            - type: report
+              parameters:
+                template: traditional-html
+                reportDir: /zap/wrk
+                reportFile: zap_report.html
+
+            - type: report
+              parameters:
+                template: traditional-json
+                reportDir: /zap/wrk
+                reportFile: zap_report.json
           EOF
 
-      # 4️⃣ Run OWASP ZAP Full Scan (with login)
-      - name: Run OWASP ZAP scan
+
+      # 4️⃣ Run ZAP automation framework
+      - name: Run ZAP authenticated scan
         run: |
-          docker run --rm --user root \
+
+          docker run --rm \
+            --user root \
             -v "$(pwd)/zap_reports:/zap/wrk" \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py \
-            -t http://host.docker.internal:3000 \
-            -t http://host.docker.internal:3000/rest/user \
-            -c /zap/wrk/zap_login.context \
-            -r /zap/wrk/zap_report.html \
-            -J /zap/wrk/zap_report.json
+            zap.sh \
+            -cmd \
+            -autorun /zap/wrk/zap_plan.yaml
+
 
       # 5️⃣ Upload reports
-      - name: Upload ZAP report
+      - name: Upload reports
         uses: actions/upload-artifact@v4
         with:
-          name: zap-report
+          name: zap-auth-report
           path: zap_reports/
