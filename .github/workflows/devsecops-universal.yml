@@ -79,7 +79,7 @@ jobs:
         args: >
           -Dsonar.projectKey=${{ env.TARGET_REPO }}
           -Dsonar.projectName=${{ env.TARGET_REPO }}
-          -Dsonar.sources=${{ env.WORKDIR }}
+          -Dsonar.sources=.
           -Dsonar.sourceEncoding=UTF-8
       env:
         SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
