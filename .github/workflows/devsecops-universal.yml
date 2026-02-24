@@ -28,138 +28,152 @@ jobs:
 
     steps:
 
-      # ====================================
-      # Detect Scan Mode
-      # ====================================
-      - name: Detect scan mode
-        run: |
-          if [ -z "${{ github.event.inputs.repo_url }}" ]; then
-            echo "SCAN_MODE=LOCAL" >> $GITHUB_ENV
-            echo "WORKDIR=." >> $GITHUB_ENV
-          else
-            echo "SCAN_MODE=EXTERNAL" >> $GITHUB_ENV
-            echo "WORKDIR=target-app" >> $GITHUB_ENV
-          fi
+    # ====================================
+    # Detect Scan Mode
+    # ====================================
+    - name: Detect scan mode
+      run: |
+        if [ -z "${{ github.event.inputs.repo_url }}" ]; then
+          echo "SCAN_MODE=LOCAL" >> $GITHUB_ENV
+          echo "WORKDIR=." >> $GITHUB_ENV
+        else
+          echo "SCAN_MODE=EXTERNAL" >> $GITHUB_ENV
+          echo "WORKDIR=target-app" >> $GITHUB_ENV
+        fi
 
-      # ====================================
-      # Extract Target Repository Name
-      # ====================================
-      - name: Extract target repository name
-        run: |
-          if [ -z "${{ github.event.inputs.repo_url }}" ]; then
-            echo "TARGET_REPO=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
-          else
-            REPO_URL="${{ github.event.inputs.repo_url }}"
-            REPO_NAME=$(basename -s .git "$REPO_URL")
-            echo "TARGET_REPO=$REPO_NAME" >> $GITHUB_ENV
-          fi
+    # ====================================
+    # Extract Repository Name
+    # ====================================
+    - name: Extract repository name
+      run: |
+        if [ -z "${{ github.event.inputs.repo_url }}" ]; then
+          echo "TARGET_REPO=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+        else
+          REPO_URL="${{ github.event.inputs.repo_url }}"
+          REPO_NAME=$(basename -s .git "$REPO_URL")
+          echo "TARGET_REPO=$REPO_NAME" >> $GITHUB_ENV
+        fi
 
-      # ====================================
-      # Checkout Pipeline Repository
-      # ====================================
-      - name: Checkout pipeline repository
-        uses: actions/checkout@v4
+    # ====================================
+    # Checkout Pipeline Repo
+    # ====================================
+    - name: Checkout pipeline repository
+      uses: actions/checkout@v4
 
-      # ====================================
-      # Clone External Repository
-      # ====================================
-      - name: Clone external repository
-        if: env.SCAN_MODE == 'EXTERNAL'
-        run: |
-          git clone -b ${{ github.event.inputs.repo_branch }} \
-            ${{ github.event.inputs.repo_url }} target-app
+    # ====================================
+    # Clone External Repo
+    # ====================================
+    - name: Clone external repository
+      if: env.SCAN_MODE == 'EXTERNAL'
+      run: |
+        git clone -b ${{ github.event.inputs.repo_branch }} \
+        ${{ github.event.inputs.repo_url }} target-app
 
-      # ====================================
-      # SonarQube Scan
-      # ====================================
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v2
-        with:
-          projectBaseDir: ${{ env.WORKDIR }}
-        env:
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    # ====================================
+    # SonarQube Scan (SAST)
+    # ====================================
+    - name: SonarQube Scan
+      uses: SonarSource/sonarqube-scan-action@v2
+      with:
+        projectBaseDir: ${{ env.WORKDIR }}
+        args: >
+          -Dsonar.projectKey=${{ env.TARGET_REPO }}
+          -Dsonar.projectName=${{ env.TARGET_REPO }}
+          -Dsonar.sources=${{ env.WORKDIR }}
+          -Dsonar.sourceEncoding=UTF-8
+      env:
+        SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-      # ====================================
-      # Build Docker Image
-      # ====================================
-      - name: Build Docker Image
-        run: |
-          cd "$WORKDIR"
-          docker build -t "$IMAGE_NAME" .
+    # ====================================
+    # SonarQube Quality Gate
+    # ====================================
+    - name: SonarQube Quality Gate
+      uses: SonarSource/sonarqube-quality-gate-action@v1
+      timeout-minutes: 5
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      # ====================================
-      # Trivy Scan
-      # ====================================
-      - name: Trivy Image Scan
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}
-          format: json
-          output: trivy.json
-        continue-on-error: true
+    # ====================================
+    # Build Docker Image
+    # ====================================
+    - name: Build Docker Image
+      run: |
+        cd "$WORKDIR"
+        docker build -t "$IMAGE_NAME" .
 
-      # ====================================
-      # Run Application
-      # ====================================
-      - name: Create Docker Network
-        run: docker network create zap-net
+    # ====================================
+    # Trivy Scan (Container Scan)
+    # ====================================
+    - name: Trivy Image Scan
+      uses: aquasecurity/trivy-action@0.20.0
+      with:
+        image-ref: ${{ env.IMAGE_NAME }}
+        format: json
+        output: trivy.json
+      continue-on-error: true
 
-      - name: Run Application
-        run: |
-          docker run -d \
-            --name app-under-test \
-            --network zap-net \
-            -p ${APP_PORT}:${APP_PORT} \
-            $IMAGE_NAME
+    # ====================================
+    # Run Application
+    # ====================================
+    - name: Create Docker Network
+      run: docker network create zap-net || true
 
-      - name: Wait for Application
-        run: sleep 30
+    - name: Run Application
+      run: |
+        docker run -d \
+          --name app-under-test \
+          --network zap-net \
+          -p ${APP_PORT}:${APP_PORT} \
+          $IMAGE_NAME
 
-      # ====================================
-      # OWASP ZAP Scan
-      # ====================================
-      - name: OWASP ZAP Full Scan
-        run: |
-          docker run --rm \
-            --user root \
-            --network zap-net \
-            -v "$(pwd)":/zap/wrk \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py \
-            -t http://app-under-test:${APP_PORT} \
-            -x zap.xml \
-            -r zap.html || true
+    - name: Wait for Application
+      run: sleep 30
 
-      # ====================================
-      # Setup Python
-      # ====================================
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    # ====================================
+    # OWASP ZAP Scan (DAST)
+    # ====================================
+    - name: OWASP ZAP Full Scan
+      run: |
+        docker run --rm \
+          --network zap-net \
+          -v "$(pwd)":/zap/wrk \
+          ghcr.io/zaproxy/zaproxy:stable \
+          zap-full-scan.py \
+          -t http://app-under-test:${APP_PORT} \
+          -x zap.xml \
+          -r zap.html || true
 
-      - name: Install dependencies
-        run: pip install requests
+    # ====================================
+    # Setup Python
+    # ====================================
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
 
-      # ====================================
-      # Upload to DefectDojo
-      # ====================================
-      - name: Upload to DefectDojo
-        run: python defectdojo_upload.py
-        env:
-          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
-          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
-          TARGET_REPO: ${{ env.TARGET_REPO }}
+    - name: Install dependencies
+      run: pip install requests
 
-      # ====================================
-      # Upload Artifacts
-      # ====================================
-      - name: Upload Security Reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-reports
-          path: |
-            trivy.json
-            zap.xml
-            zap.html
+    # ====================================
+    # Upload to DefectDojo
+    # ====================================
+    - name: Upload to DefectDojo
+      run: python defectdojo_upload.py
+      env:
+        DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+        DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+        TARGET_REPO: ${{ env.TARGET_REPO }}
+
+    # ====================================
+    # Upload Security Reports
+    # ====================================
+    - name: Upload Security Reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-reports
+        path: |
+          trivy.json
+          zap.xml
+          zap.html
