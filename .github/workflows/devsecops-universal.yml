@@ -25,13 +25,13 @@ jobs:
       run: |
        docker run --rm \
         -u root \
-        -v "$(pwd)":/zap/wrk \
+        -v "$(pwd)":/zap/wrk:rw \
         ghcr.io/zaproxy/zaproxy:stable \
         zap-full-scan.py \
         -t http://testphp.vulnweb.com \
         -x /zap/wrk/zap.xml \
         -r /zap/wrk/zap.html \
-        -z "-config connection.timeoutInSecs=60"
+        -I
     # ===============================
     # Setup Python
     # ===============================
