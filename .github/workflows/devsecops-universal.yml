@@ -23,13 +23,14 @@ jobs:
     # ===============================
     - name: OWASP ZAP Full Scan
       run: |
-        docker run --rm \
-          -v "$(pwd)":/zap/wrk:rw \
-          ghcr.io/zaproxy/zaproxy:stable \
-          zap-full-scan.py \
-          -t http://testphp.vulnweb.com \
-          -x /zap/wrk/zap.xml \
-          -r /zap/wrk/zap.html
+       docker run --rm \
+        -v "$(pwd)":/zap/wrk \
+        ghcr.io/zaproxy/zaproxy:stable \
+        zap-full-scan.py \
+        -t http://testphp.vulnweb.com \
+        -x /zap/wrk/zap.xml \
+        -r /zap/wrk/zap.html \
+        -z "-config connection.timeoutInSecs=60"
     # ===============================
     # Setup Python
     # ===============================
