@@ -24,14 +24,12 @@ jobs:
     - name: OWASP ZAP Full Scan
       run: |
         docker run --rm \
-          -v "$(pwd)":/zap/wrk \
-          -w /zap/wrk \
+          -v "$(pwd)":/zap/wrk:rw \
           ghcr.io/zaproxy/zaproxy:stable \
           zap-full-scan.py \
           -t http://testphp.vulnweb.com \
-          -x zap.xml \
-          -r zap.html || true
-
+          -x /zap/wrk/zap.xml \
+          -r /zap/wrk/zap.html
     # ===============================
     # Setup Python
     # ===============================
