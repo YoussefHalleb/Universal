@@ -24,6 +24,7 @@ jobs:
     - name: OWASP ZAP Full Scan
       run: |
        docker run --rm \
+        -u root \
         -v "$(pwd)":/zap/wrk \
         ghcr.io/zaproxy/zaproxy:stable \
         zap-full-scan.py \
