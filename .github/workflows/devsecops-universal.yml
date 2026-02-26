@@ -1,155 +1,40 @@
-name: Universal DevSecOps Enterprise Pipeline
+name: DAST Full Spider + Active Scan
 
 on:
   push:
     branches: ["main"]
   pull_request:
   workflow_dispatch:
-    inputs:
-      repo_url:
-        description: "GitHub repository URL (leave empty for local repo)"
-        required: false
-      repo_branch:
-        description: "Git branch"
-        required: false
-        default: "main"
-      app_port:
-        description: "Application port"
-        required: false
-        default: "80"
 
 jobs:
-  security:
+  zap_full_scan:
     runs-on: ubuntu-latest
-
-    env:
-      APP_PORT: ${{ github.event.inputs.app_port || '80' }}
-      IMAGE_NAME: scanned-app
 
     steps:
 
-    # ====================================
-    # Detect Scan Mode
-    # ====================================
-    - name: Detect scan mode
-      run: |
-        if [ -z "${{ github.event.inputs.repo_url }}" ]; then
-          echo "SCAN_MODE=LOCAL" >> $GITHUB_ENV
-          echo "WORKDIR=." >> $GITHUB_ENV
-        else
-          echo "SCAN_MODE=EXTERNAL" >> $GITHUB_ENV
-          echo "WORKDIR=target-app" >> $GITHUB_ENV
-        fi
-
-    # ====================================
-    # Extract Repository Name
-    # ====================================
-    - name: Extract repository name
-      run: |
-        if [ -z "${{ github.event.inputs.repo_url }}" ]; then
-          echo "TARGET_REPO=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
-        else
-          REPO_URL="${{ github.event.inputs.repo_url }}"
-          REPO_NAME=$(basename -s .git "$REPO_URL")
-          echo "TARGET_REPO=$REPO_NAME" >> $GITHUB_ENV
-        fi
-
-    # ====================================
-    # Checkout Pipeline Repo
-    # ====================================
-    - name: Checkout pipeline repository
+    # ===============================
+    # Checkout Repository
+    # ===============================
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # ====================================
-    # Clone External Repo
-    # ====================================
-    - name: Clone external repository
-      if: env.SCAN_MODE == 'EXTERNAL'
-      run: |
-        git clone -b ${{ github.event.inputs.repo_branch }} \
-        ${{ github.event.inputs.repo_url }} target-app
-
-    # ====================================
-    # SonarQube Scan (SAST)
-    # ====================================
-    - name: SonarQube Scan
-      uses: SonarSource/sonarqube-scan-action@v2
-      with:
-        projectBaseDir: ${{ env.WORKDIR }}
-        args: >
-          -Dsonar.projectKey=${{ env.TARGET_REPO }}
-          -Dsonar.projectName=${{ env.TARGET_REPO }}
-          -Dsonar.sources=.
-          -Dsonar.sourceEncoding=UTF-8
-      env:
-        SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-    # ====================================
-    # SonarQube Quality Gate
-    # ====================================
-    - name: SonarQube Quality Gate
-      uses: SonarSource/sonarqube-quality-gate-action@v1
-      with:
-        scanMetadataReportFile: ${{ env.WORKDIR }}/.scannerwork/report-task.txt
-      timeout-minutes: 5
-      env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-    # ====================================
-    # Build Docker Image
-    # ====================================
-    - name: Build Docker Image
-      run: |
-        cd "$WORKDIR"
-        docker build -t "$IMAGE_NAME" .
-
-    # ====================================
-    # Trivy Scan (Container Scan)
-    # ====================================
-    - name: Trivy Image Scan
-      uses: aquasecurity/trivy-action@0.20.0
-      with:
-        image-ref: ${{ env.IMAGE_NAME }}
-        format: json
-        output: trivy.json
-      continue-on-error: true
-
-    # ====================================
-    # Run Application
-    # ====================================
-    - name: Create Docker Network
-      run: docker network create zap-net || true
-
-    - name: Run Application
-      run: |
-        docker run -d \
-          --name app-under-test \
-          --network zap-net \
-          -p ${APP_PORT}:${APP_PORT} \
-          $IMAGE_NAME
-
-    - name: Wait for Application
-      run: sleep 30
-
-    # ====================================
-    # OWASP ZAP Scan (DAST)
-    # ====================================
+    # ===============================
+    # OWASP ZAP Full Scan (Spider + Active)
+    # ===============================
     - name: OWASP ZAP Full Scan
       run: |
-        docker run --rm \
-          --network zap-net \
-          -v "$(pwd)":/zap/wrk \
-          ghcr.io/zaproxy/zaproxy:stable \
-          zap-full-scan.py \
-          -t http://app-under-test:${APP_PORT} \
-          -x zap.xml \
-          -r zap.html || true
-
-    # ====================================
+       docker run --rm \
+        -u root \
+        -v "$(pwd)":/zap/wrk:rw \
+        ghcr.io/zaproxy/zaproxy:stable \
+        zap-full-scan.py \
+        -t http://testfire.net \
+        -x /zap/wrk/zap.xml \
+        -r /zap/wrk/zap.html \
+        -I
+    # ===============================
     # Setup Python
-    # ====================================
+    # ===============================
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
@@ -158,24 +43,23 @@ jobs:
     - name: Install dependencies
       run: pip install requests
 
-    # ====================================
+    # ===============================
     # Upload to DefectDojo
-    # ====================================
+    # ===============================
     - name: Upload to DefectDojo
       run: python defectdojo_upload.py
       env:
         DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
         DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
-        TARGET_REPO: ${{ env.TARGET_REPO }}
+        TARGET_REPO: testphp-vulnweb
 
-    # ====================================
-    # Upload Security Reports
-    # ====================================
-    - name: Upload Security Reports
+    # ===============================
+    # Upload Reports
+    # ===============================
+    - name: Upload ZAP Reports
       uses: actions/upload-artifact@v4
       with:
-        name: security-reports
+        name: zap-reports
         path: |
-          trivy.json
           zap.xml
           zap.html
