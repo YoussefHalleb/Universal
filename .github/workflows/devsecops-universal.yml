@@ -28,7 +28,7 @@ jobs:
         -v "$(pwd)":/zap/wrk:rw \
         ghcr.io/zaproxy/zaproxy:stable \
         zap-full-scan.py \
-        -t http://testfire.net \
+        -t http://wackopicko.com \
         -x /zap/wrk/zap.xml \
         -r /zap/wrk/zap.html \
         -I
@@ -51,7 +51,7 @@ jobs:
       env:
         DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
         DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
-        TARGET_REPO: Altro-Mutual(bancaire)
+        TARGET_REPO: WackoPicko
 
     # ===============================
     # Upload Reports
