@@ -179,3 +179,11 @@ jobs:
           trivy.json
           zap.xml
           zap.html
+    # ====================================
+# Upload ZAP Report to Backend
+# ====================================
+    - name: Upload ZAP Report to Backend
+      run: |
+          curl -X POST https://provide-connectors-over-developing.trycloudflare.com/api/products/upload-zap \
+          -F "repo_name=${{ env.TARGET_REPO }}" \
+          -F "report=@zap.html"
