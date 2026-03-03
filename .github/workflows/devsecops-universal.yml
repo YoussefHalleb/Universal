@@ -69,7 +69,7 @@ jobs:
         git clone -b ${{ github.event.inputs.repo_branch }} \
         ${{ github.event.inputs.repo_url }} target-app
 
-   
+    
 
     
 
@@ -155,14 +155,13 @@ jobs:
           trivy.json
           zap.xml
           zap.html
-    # ====================================
-# Upload ZAP Report to Backend
-# ====================================
+          
     - name: Debug - find ZAP report
       run: |
         echo "PWD=$(pwd)"
         ls -la
         find . -maxdepth 5 -name "zap.html" -print
+
     - name: Upload ZAP Report to Backend
       run: |
         ZAP_FILE=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
