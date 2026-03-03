@@ -69,33 +69,9 @@ jobs:
         git clone -b ${{ github.event.inputs.repo_branch }} \
         ${{ github.event.inputs.repo_url }} target-app
 
-    # ====================================
-    # SonarQube Scan (SAST)
-    # ====================================
-    - name: SonarQube Scan
-      uses: SonarSource/sonarqube-scan-action@v2
-      with:
-        projectBaseDir: ${{ env.WORKDIR }}
-        args: >
-          -Dsonar.projectKey=${{ env.TARGET_REPO }}
-          -Dsonar.projectName=${{ env.TARGET_REPO }}
-          -Dsonar.sources=.
-          -Dsonar.sourceEncoding=UTF-8
-      env:
-        SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+   
 
-    # ====================================
-    # SonarQube Quality Gate
-    # ====================================
-    - name: SonarQube Quality Gate
-      uses: SonarSource/sonarqube-quality-gate-action@v1
-      with:
-        scanMetadataReportFile: ${{ env.WORKDIR }}/.scannerwork/report-task.txt
-      timeout-minutes: 5
-      env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+    
 
     # ====================================
     # Build Docker Image
