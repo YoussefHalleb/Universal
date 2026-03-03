@@ -158,8 +158,21 @@ jobs:
     # ====================================
 # Upload ZAP Report to Backend
 # ====================================
+    - name: Debug - find ZAP report
+      run: |
+        echo "PWD=$(pwd)"
+        ls -la
+        find . -maxdepth 5 -name "zap.html" -print
     - name: Upload ZAP Report to Backend
       run: |
-          curl -X POST https://provide-connectors-over-developing.trycloudflare.com/api/products/upload-zap \
+        ZAP_FILE=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
+        echo "ZAP_FILE=$ZAP_FILE"
+
+        if [ -z "$ZAP_FILE" ]; then
+          echo "zap.html not found, skipping upload"
+          exit 0
+        fi
+
+        curl -X POST https://provide-connectors-over-developing.trycloudflare.com/api/products/upload-zap \
           -F "repo_name=${{ env.TARGET_REPO }}" \
-          -F "report=@zap.html"
+          -F "report=@$ZAP_FILE"
