@@ -115,6 +115,7 @@ jobs:
     - name: OWASP ZAP Full Scan
       run: |
         docker run --rm \
+          --user root \
           --network zap-net \
           -v "$(pwd)":/zap/wrk \
           ghcr.io/zaproxy/zaproxy:stable \
