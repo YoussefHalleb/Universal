@@ -173,6 +173,6 @@ jobs:
           exit 0
         fi
 
-        curl -X POST https://provide-connectors-over-developing.trycloudflare.com/api/products/upload-zap \
+        curl -X POST https://biology-wave-contributions-antarctica.trycloudflare.com/api/products/upload-zap \
           -F "repo_name=${{ env.TARGET_REPO }}" \
           -F "report=@$ZAP_FILE"
