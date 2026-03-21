@@ -234,7 +234,7 @@ jobs:
         # Envoyer au backend
         try:
             res = requests.post(
-                "https://biology-wave-contributions-antarctica.trycloudflare.com/api/performance/results",
+                "https://constitutes-departments-supposed-look.trycloudflare.com/api/performance/results",
                 json=summary,
                 timeout=10
             )
