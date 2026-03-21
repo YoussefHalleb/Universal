@@ -222,9 +222,10 @@ jobs:
             except:
                 return 0
 
-        def get_ms(pattern):
-            m = re.search(pattern, output)
-            return to_ms(m.group(1)) if m else 0
+        def get_ms(pattern, text=None):
+          src = text if text else output
+          m = re.search(pattern, src)
+          return to_ms(m.group(1)) if m else 0
 
         def get_float(pattern):
             m = re.search(pattern, output)
@@ -233,8 +234,8 @@ jobs:
         avg     = get_ms(r'http_req_duration[\s.✓]+:.*?avg=([\d.]+(?:µs|us|ms|s))')
         min_val = get_ms(r'http_req_duration[\s.✓]+:.*?min=([\d.]+(?:µs|us|ms|s))')
         max_val = get_ms(r'http_req_duration[\s.✓]+:.*?max=([\d.]+(?:µs|us|ms|s))')
-        p90     = get_ms(r'p\(90\)=([\d.]+(?:µs|us|ms|s))')
-        p95     = get_ms(r'p\(95\)=([\d.]+(?:µs|us|ms|s))')
+        p90 = get_ms(r'p\(90\)=([\d.]+(?:µs|us|ms|s))', output.split('http_req_duration')[1] if 'http_req_duration' in output else output)
+        p95 = get_ms(r'p\(95\)=([\d.]+(?:µs|us|ms|s))', output.split('http_req_duration')[1] if 'http_req_duration' in output else output)
         total   = int(get_float(r'http_reqs[\s.]+:\s*(\d+)'))
         tput    = get_float(r'http_reqs[\s.]+:.*?([\d.]+)/s')
         erate   = get_float(r'http_req_failed[\s.✓]+:\s*([\d.]+)%')
