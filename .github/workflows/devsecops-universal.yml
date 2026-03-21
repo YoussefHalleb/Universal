@@ -173,7 +173,7 @@ jobs:
           exit 0
         fi
 
-        curl -X POST https://biology-wave-contributions-antarctica.trycloudflare.com/api/products/upload-zap \
+        curl -X POST https://constitutes-departments-supposed-look.trycloudflare.com/api/products/upload-zap \
           -F "repo_name=${{ env.TARGET_REPO }}" \
           -F "report=@$ZAP_FILE"
 
@@ -196,7 +196,7 @@ jobs:
         fi
 
         # Lire le JSON et envoyer au backend
-        curl -X POST https://biology-wave-contributions-antarctica.trycloudflare.com/api/performance/results \
+        curl -X POST https://constitutes-departments-supposed-look.trycloudflare.com/api/performance/results \
           -H "Content-Type: application/json" \
           -d @summary.json
 
