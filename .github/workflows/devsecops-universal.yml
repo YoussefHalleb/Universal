@@ -182,26 +182,73 @@ jobs:
         curl https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz -L | tar xvz
         sudo mv k6-v0.50.0-linux-amd64/k6 /usr/local/bin/
 
+    # ====================================
+    # k6 Performance Test
+    # ====================================
+    - name: Install k6
+      run: |
+        curl https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz -L | tar xvz
+        sudo mv k6-v0.50.0-linux-amd64/k6 /usr/local/bin/
+        k6 version
+
     - name: Run k6 Performance Test
       run: |
         APP_URL="http://localhost:${APP_PORT}" \
         PRODUCT_NAME="${{ env.TARGET_REPO }}" \
-        k6 run --summary-export=summary.json k6-test.js || true
+        k6 run k6-test.js 2>&1 | tee k6-output.txt || true
 
-    - name: Send Performance Results to Backend
+    - name: Parse k6 results and send to backend
       run: |
-        if [ ! -f summary.json ]; then
-          echo "No summary.json found, skipping"
-          exit 0
-        fi
+        python3 - <<'EOF'
+        import re, json, requests, os
 
-        # Lire le JSON et envoyer au backend
-        curl -X POST https://constitutes-departments-supposed-look.trycloudflare.com/api/performance/results \
-          -H "Content-Type: application/json" \
-          -d @summary.json
+        output = open("k6-output.txt").read()
+        print("K6 OUTPUT:", output[:500])
+
+        def extract(pattern, text, default=0):
+            m = re.search(pattern, text)
+            return float(m.group(1)) if m else default
+
+        summary = {
+            "product_name":     os.environ.get("TARGET_REPO", "unknown"),
+            "app_url":          f"http://localhost:{os.environ.get('APP_PORT', '80')}",
+            "duration_secs":    120,
+            "vus":              100,
+            "total_requests":   int(extract(r'http_reqs[^\d]+(\d+)', output)),
+            "failed_requests":  int(extract(r'http_req_failed[^\d]+([\d.]+)%', output)),
+            "error_rate":       extract(r'http_req_failed[^\d]+([\d.]+)%', output),
+            "avg_response_ms":  extract(r'http_req_duration[^a]+avg=([\d.]+)', output),
+            "min_response_ms":  extract(r'http_req_duration[^m]+min=([\d.]+)', output),
+            "max_response_ms":  extract(r'http_req_duration[^m]+max=([\d.]+)', output),
+            "p90_response_ms":  extract(r'p\(90\)=([\d.]+)', output),
+            "p95_response_ms":  extract(r'p\(95\)=([\d.]+)', output),
+            "throughput":       extract(r'http_reqs[^\d]+([\d.]+)/s', output),
+        }
+
+        print("SUMMARY:", json.dumps(summary, indent=2))
+
+        # Sauvegarder summary.json
+        with open("summary.json", "w") as f:
+            json.dump(summary, f)
+
+        # Envoyer au backend
+        try:
+            res = requests.post(
+                "https://biology-wave-contributions-antarctica.trycloudflare.com/api/performance/results",
+                json=summary,
+                timeout=10
+            )
+            print("Backend response:", res.status_code, res.text)
+        except Exception as e:
+            print("Failed to send to backend:", e)
+        EOF
+      env:
+        TARGET_REPO: ${{ env.TARGET_REPO }}
+        APP_PORT: ${{ env.APP_PORT }}
 
     - name: Upload k6 Report
       uses: actions/upload-artifact@v4
+      if: always()
       with:
         name: k6-report
         path: summary.json
