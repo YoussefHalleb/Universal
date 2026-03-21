@@ -25,6 +25,7 @@ jobs:
     env:
       APP_PORT: ${{ github.event.inputs.app_port || '80' }}
       IMAGE_NAME: scanned-app
+      BACKEND_URL: https://constitutes-departments-supposed-look.trycloudflare.com
 
     steps:
 
@@ -159,11 +160,6 @@ jobs:
         ls -la
         find . -maxdepth 5 -name "zap.html" -print
 
-    - name: Load backend URL
-      run: |
-        BACKEND_URL=$(cat backend_url.txt | tr -d '[:space:]')
-        echo "BACKEND_URL=$BACKEND_URL" >> $GITHUB_ENV
-
     - name: Upload ZAP Report to Backend
       run: |
         ZAP_FILE=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
@@ -192,10 +188,12 @@ jobs:
         APP_URL="http://localhost:${APP_PORT}" \
         PRODUCT_NAME="${{ env.TARGET_REPO }}" \
         k6 run k6-test.js 2>&1 | tee k6-output.txt || true
+        echo "=== FULL K6 OUTPUT ==="
+        cat k6-output.txt
 
     - name: Parse k6 results and send to backend
       run: |
-        python3 << 'PYEOF'
+        python3 - <<'EOF'
         import re, json, requests, os
 
         try:
@@ -203,82 +201,74 @@ jobs:
         except:
             output = ""
 
-        print("=== K6 OUTPUT ===")
+        print("K6 OUTPUT:")
         print(output)
-        print("=================")
 
-        def parse_duration(s):
+        def to_ms(s):
             if not s:
                 return 0
             s = s.strip()
-            total = 0
-            m = re.search(r'(\d+\.?\d*)m(?!s)', s)
-            if m:
-                total += float(m.group(1)) * 60000
-            s2 = re.search(r'(\d+\.?\d*)s(?!ms)', s)
-            if s2:
-                total += float(s2.group(1)) * 1000
-            ms = re.search(r'(\d+\.?\d*)ms', s)
-            if ms:
-                total += float(ms.group(1))
-            if total > 0:
-                return round(total, 2)
+            if "ms" in s:
+                return round(float(re.sub(r'[^\d.]', '', s.replace("ms", ""))), 2)
+            elif "s" in s and "m" not in s:
+                return round(float(re.sub(r'[^\d.]', '', s.replace("s", ""))) * 1000, 2)
+            elif "m" in s:
+                parts = re.findall(r'(\d+\.?\d*)', s)
+                if len(parts) >= 2:
+                    return round(float(parts[0]) * 60000 + float(parts[1]) * 1000, 2)
             try:
-                return float(re.sub(r'[a-zA-Z]', '', s))
+                return round(float(re.sub(r'[^\d.]', '', s)), 2)
             except:
                 return 0
 
-        def extract_duration(pattern):
+        def get_ms(pattern):
             m = re.search(pattern, output)
-            return parse_duration(m.group(1)) if m else 0
+            return to_ms(m.group(1)) if m else 0
 
-        def extract_float(pattern):
+        def get_float(pattern):
             m = re.search(pattern, output)
             return float(m.group(1)) if m else 0
 
-        avg     = extract_duration(r'http_req_duration[^:]*:.*?avg=(\S+)')
-        min_val = extract_duration(r'http_req_duration[^:]*:.*?min=(\S+)')
-        max_val = extract_duration(r'http_req_duration[^:]*:.*?max=(\S+)')
-        p90     = extract_duration(r'http_req_duration[^:]*:.*?p\(90\)=(\S+)')
-        p95     = extract_duration(r'http_req_duration[^:]*:.*?p\(95\)=(\S+)')
-
-        total_reqs = int(extract_float(r'http_reqs[^\d]*(\d+)'))
-        throughput = extract_float(r'http_reqs[^/\n]*?(\d+\.?\d+)/s')
-        error_rate = extract_float(r'http_req_failed[^%\d]*(\d+\.?\d+)%')
-        failed     = int(extract_float(r'http_req_failed.*?(\d+)\s*$'))
+        avg     = get_ms(r'http_req_duration[\s.]+:.*?avg=([\d.]+(?:ms|s))')
+        min_val = get_ms(r'http_req_duration[\s.]+:.*?min=([\d.]+(?:ms|s))')
+        max_val = get_ms(r'http_req_duration[\s.]+:.*?max=([\d.]+(?:ms|s))')
+        p90     = get_ms(r'p\(90\)=([\d.]+(?:ms|s))')
+        p95     = get_ms(r'p\(95\)=([\d.]+(?:ms|s))')
+        total   = int(get_float(r'http_reqs[\s.]+:\s*(\d+)'))
+        tput    = get_float(r'http_reqs[\s.]+:.*?([\d.]+)/s')
+        erate   = get_float(r'http_req_failed[\s.]+:\s*([\d.]+)%')
 
         summary = {
             "product_name":    os.environ.get("TARGET_REPO", "unknown"),
             "app_url":         f"http://localhost:{os.environ.get('APP_PORT', '80')}",
-            "duration_secs":   120,
+            "duration_secs":   150,
             "vus":             100,
-            "total_requests":  total_reqs,
-            "failed_requests": failed,
-            "error_rate":      error_rate,
+            "total_requests":  total,
+            "failed_requests": 0,
+            "error_rate":      erate,
             "avg_response_ms": avg,
             "min_response_ms": min_val,
             "max_response_ms": max_val,
             "p90_response_ms": p90,
             "p95_response_ms": p95,
-            "throughput":      throughput,
+            "throughput":      tput,
         }
 
-        print("Summary:", json.dumps(summary, indent=2))
+        print("SUMMARY:", json.dumps(summary, indent=2))
 
         with open("summary.json", "w") as f:
             json.dump(summary, f)
 
         try:
-            backend_url = open("backend_url.txt").read().strip()
             res = requests.post(
-                backend_url + "/api/performance/results",
+                "https://constitutes-departments-supposed-look.trycloudflare.com/api/performance/results",
                 json=summary,
-                timeout=15
+                timeout=10
             )
             print("Backend response:", res.status_code, res.text)
         except Exception as e:
-            print("Failed to send to backend:", e)
-        PYEOF
+            print("Failed to send:", e)
+        EOF
       env:
         TARGET_REPO: ${{ env.TARGET_REPO }}
         APP_PORT: ${{ env.APP_PORT }}
