@@ -176,3 +176,32 @@ jobs:
         curl -X POST https://biology-wave-contributions-antarctica.trycloudflare.com/api/products/upload-zap \
           -F "repo_name=${{ env.TARGET_REPO }}" \
           -F "report=@$ZAP_FILE"
+
+    - name: Install k6
+      run: |
+        curl https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz -L | tar xvz
+        sudo mv k6-v0.50.0-linux-amd64/k6 /usr/local/bin/
+
+    - name: Run k6 Performance Test
+      run: |
+        APP_URL="http://localhost:${APP_PORT}" \
+        PRODUCT_NAME="${{ env.TARGET_REPO }}" \
+        k6 run --summary-export=summary.json k6-test.js || true
+
+    - name: Send Performance Results to Backend
+      run: |
+        if [ ! -f summary.json ]; then
+          echo "No summary.json found, skipping"
+          exit 0
+        fi
+
+        # Lire le JSON et envoyer au backend
+        curl -X POST https://biology-wave-contributions-antarctica.trycloudflare.com/api/performance/results \
+          -H "Content-Type: application/json" \
+          -d @summary.json
+
+    - name: Upload k6 Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: k6-report
+        path: summary.json
