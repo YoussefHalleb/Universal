@@ -69,10 +69,6 @@ jobs:
         git clone -b ${{ github.event.inputs.repo_branch }} \
         ${{ github.event.inputs.repo_url }} target-app
 
-    
-
-    
-
     # ====================================
     # Build Docker Image
     # ====================================
@@ -156,12 +152,17 @@ jobs:
           trivy.json
           zap.xml
           zap.html
-          
+
     - name: Debug - find ZAP report
       run: |
         echo "PWD=$(pwd)"
         ls -la
         find . -maxdepth 5 -name "zap.html" -print
+
+    - name: Load backend URL
+      run: |
+        BACKEND_URL=$(cat backend_url.txt | tr -d '[:space:]')
+        echo "BACKEND_URL=$BACKEND_URL" >> $GITHUB_ENV
 
     - name: Upload ZAP Report to Backend
       run: |
@@ -173,14 +174,9 @@ jobs:
           exit 0
         fi
 
-        curl -X POST https://constitutes-departments-supposed-look.trycloudflare.com/api/products/upload-zap \
+        curl -X POST ${{ env.BACKEND_URL }}/api/products/upload-zap \
           -F "repo_name=${{ env.TARGET_REPO }}" \
           -F "report=@$ZAP_FILE"
-
-    - name: Install k6
-      run: |
-        curl https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz -L | tar xvz
-        sudo mv k6-v0.50.0-linux-amd64/k6 /usr/local/bin/
 
     # ====================================
     # k6 Performance Test
@@ -199,49 +195,90 @@ jobs:
 
     - name: Parse k6 results and send to backend
       run: |
-        python3 - <<'EOF'
+        python3 << 'PYEOF'
         import re, json, requests, os
 
-        output = open("k6-output.txt").read()
-        print("K6 OUTPUT:", output[:500])
+        try:
+            output = open("k6-output.txt").read()
+        except:
+            output = ""
 
-        def extract(pattern, text, default=0):
-            m = re.search(pattern, text)
-            return float(m.group(1)) if m else default
+        print("=== K6 OUTPUT ===")
+        print(output)
+        print("=================")
+
+        def parse_duration(s):
+            if not s:
+                return 0
+            s = s.strip()
+            total = 0
+            m = re.search(r'(\d+\.?\d*)m(?!s)', s)
+            if m:
+                total += float(m.group(1)) * 60000
+            s2 = re.search(r'(\d+\.?\d*)s(?!ms)', s)
+            if s2:
+                total += float(s2.group(1)) * 1000
+            ms = re.search(r'(\d+\.?\d*)ms', s)
+            if ms:
+                total += float(ms.group(1))
+            if total > 0:
+                return round(total, 2)
+            try:
+                return float(re.sub(r'[a-zA-Z]', '', s))
+            except:
+                return 0
+
+        def extract_duration(pattern):
+            m = re.search(pattern, output)
+            return parse_duration(m.group(1)) if m else 0
+
+        def extract_float(pattern):
+            m = re.search(pattern, output)
+            return float(m.group(1)) if m else 0
+
+        avg     = extract_duration(r'http_req_duration[^:]*:.*?avg=(\S+)')
+        min_val = extract_duration(r'http_req_duration[^:]*:.*?min=(\S+)')
+        max_val = extract_duration(r'http_req_duration[^:]*:.*?max=(\S+)')
+        p90     = extract_duration(r'http_req_duration[^:]*:.*?p\(90\)=(\S+)')
+        p95     = extract_duration(r'http_req_duration[^:]*:.*?p\(95\)=(\S+)')
+
+        total_reqs = int(extract_float(r'http_reqs[^\d]*(\d+)'))
+        throughput = extract_float(r'http_reqs[^/\n]*?(\d+\.?\d+)/s')
+        error_rate = extract_float(r'http_req_failed[^%\d]*(\d+\.?\d+)%')
+        failed     = int(extract_float(r'http_req_failed.*?(\d+)\s*$'))
 
         summary = {
-            "product_name":     os.environ.get("TARGET_REPO", "unknown"),
-            "app_url":          f"http://localhost:{os.environ.get('APP_PORT', '80')}",
-            "duration_secs":    120,
-            "vus":              100,
-            "total_requests":   int(extract(r'http_reqs[^\d]+(\d+)', output)),
-            "failed_requests":  int(extract(r'http_req_failed[^\d]+([\d.]+)%', output)),
-            "error_rate":       extract(r'http_req_failed[^\d]+([\d.]+)%', output),
-            "avg_response_ms":  extract(r'http_req_duration[^a]+avg=([\d.]+)', output),
-            "min_response_ms":  extract(r'http_req_duration[^m]+min=([\d.]+)', output),
-            "max_response_ms":  extract(r'http_req_duration[^m]+max=([\d.]+)', output),
-            "p90_response_ms":  extract(r'p\(90\)=([\d.]+)', output),
-            "p95_response_ms":  extract(r'p\(95\)=([\d.]+)', output),
-            "throughput":       extract(r'http_reqs[^\d]+([\d.]+)/s', output),
+            "product_name":    os.environ.get("TARGET_REPO", "unknown"),
+            "app_url":         f"http://localhost:{os.environ.get('APP_PORT', '80')}",
+            "duration_secs":   120,
+            "vus":             100,
+            "total_requests":  total_reqs,
+            "failed_requests": failed,
+            "error_rate":      error_rate,
+            "avg_response_ms": avg,
+            "min_response_ms": min_val,
+            "max_response_ms": max_val,
+            "p90_response_ms": p90,
+            "p95_response_ms": p95,
+            "throughput":      throughput,
         }
 
-        print("SUMMARY:", json.dumps(summary, indent=2))
+        print("Summary:", json.dumps(summary, indent=2))
 
-        # Sauvegarder summary.json
         with open("summary.json", "w") as f:
             json.dump(summary, f)
 
-        # Envoyer au backend
         try:
+            backend_url = open("backend_url.txt").read().strip()
             res = requests.post(
-                "https://constitutes-departments-supposed-look.trycloudflare.com/api/performance/results",
+                backend_url + "/api/performance/results",
                 json=summary,
-                timeout=10
+                timeout=15
             )
             print("Backend response:", res.status_code, res.text)
         except Exception as e:
             print("Failed to send to backend:", e)
-        EOF
+        PYEOF
       env:
         TARGET_REPO: ${{ env.TARGET_REPO }}
         APP_PORT: ${{ env.APP_PORT }}
