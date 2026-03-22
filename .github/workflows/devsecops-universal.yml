@@ -263,7 +263,7 @@ jobs:
 
         try:
             res = requests.post(
-                "https://washing-chuck-breed-intend.trycloudflare.com/api/performance/results",
+                "https://fri-usual-illustrations-theaters.trycloudflare.com/api/performance/results",
                 json=summary,
                 timeout=10
             )
