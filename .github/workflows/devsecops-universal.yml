@@ -104,7 +104,12 @@ jobs:
           $IMAGE_NAME
 
     - name: Wait for Application
-      run: sleep 30
+      run: |
+        sleep 30
+        echo "=== Docker logs ==="
+        docker logs app-under-test || true
+        echo "=== Port check ==="
+        curl -v http://localhost:${APP_PORT} 2>&1 | head -30 || true
 
     # ====================================
     # OWASP ZAP Scan (DAST)
