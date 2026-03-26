@@ -5,11 +5,15 @@ def load_trivy(path="trivy.json"):
     with open(path) as f:
         return json.load(f)
 
-def extract_critical_vulns(data, max_vulns=5):
+def extract_critical_vulns(data, max_vulns=10):
     vulns = []
     for result in data.get("Results", []):
+        # Cibler uniquement les packages node/npm
+        if result.get("Type") not in ("node-pkg", "npm"):
+            print(f"  ⏭ Skipping: {result.get('Type')} — {result.get('Target')}")
+            continue
         for v in result.get("Vulnerabilities", []) or []:
-            if v.get("Severity") in ("CRITICAL", "HIGH"):
+            if v.get("Severity") in ("CRITICAL", "HIGH") and v.get("FixedVersion"):
                 vulns.append({
                     "pkg": v.get("PkgName"),
                     "installed": v.get("InstalledVersion"),
