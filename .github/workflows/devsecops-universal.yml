@@ -161,6 +161,7 @@ jobs:
         DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
         DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
         TARGET_REPO: ${{ env.TARGET_REPO }}
+        REPO_BRANCH: ${{ github.event.inputs.repo_branch }}
 
     # ====================================
     # Upload Security Reports
