@@ -3,11 +3,6 @@ from datetime import datetime
 
 GITHUB_TOKEN = os.environ["GH_PAT"]
 REPO = os.environ["GITHUB_REPOSITORY"]
-BASE_BRANCH = os.environ.get("REPO_BRANCH", "main")
-
-print(f"DEBUG BASE_BRANCH={BASE_BRANCH}")
-print(f"DEBUG GITHUB_ACTOR={os.environ.get('GITHUB_ACTOR')}")
-print(f"DEBUG REPO_URL={os.environ.get('REPO_URL')}")
 
 def git(cmd, cwd=None):
     subprocess.run(cmd, shell=True, check=True, cwd=cwd)
@@ -45,15 +40,22 @@ if __name__ == "__main__":
     repo_name = match.group(2) if match else "repo"
     github_actor = os.environ.get("GITHUB_ACTOR", "YoussefHalleb")
 
-    print(f"DEBUG repo_name={repo_name}")
-    print(f"DEBUG github_actor={github_actor}")
-    print(f"DEBUG branch={branch}")
-    print(f"DEBUG base={BASE_BRANCH}")
-
     fork_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{github_actor}/{repo_name}.git"
     git(f"git remote add fork {fork_url}", cwd=app_dir)
     git(f"git push fork {branch}", cwd=app_dir)
 
+    # ← ICI : détecter automatiquement la branche par défaut
+    repo_info = requests.get(
+        f"https://api.github.com/repos/{github_actor}/{repo_name}",
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+    ).json()
+    default_branch = repo_info.get("default_branch", "main")
+    print(f"DEBUG default_branch={default_branch}")
+
+    # ← ICI : créer la PR avec la bonne base
     resp = requests.post(
         f"https://api.github.com/repos/{github_actor}/{repo_name}/pulls",
         json={
@@ -64,7 +66,7 @@ if __name__ == "__main__":
                 *[f"- **{f['pkg']}** — {f['cve']}: `{f['cmd']}`" for f in applied]
             ]),
             "head": branch,
-            "base": BASE_BRANCH
+            "base": default_branch
         },
         headers={
             "Authorization": f"Bearer {GITHUB_TOKEN}",
