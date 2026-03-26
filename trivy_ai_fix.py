@@ -75,15 +75,22 @@ Vulnerabilities:
 
 def apply_fixes(fixes):
     applied = []
+    
+    app_dir = "target-app" if os.path.exists("target-app") else "."
+    print(f"Applying fixes in: {app_dir}")
+    
     for fix in fixes:
         cmd = fix["cmd"]
-
-        # apt-get nécessite sudo en CI
         if cmd.startswith("apt-get") and not cmd.startswith("sudo"):
             cmd = "sudo " + cmd
-
         print(f"Applying: {cmd}")
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd, 
+            shell=True, 
+            capture_output=True, 
+            text=True,
+            cwd=app_dir  # ← seul changement
+        )
         if result.returncode == 0:
             applied.append(fix)
             print(f"  ✓ Fixed {fix['pkg']} ({fix['cve']})")
