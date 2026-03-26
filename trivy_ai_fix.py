@@ -38,13 +38,23 @@ def ask_groq_for_fix(vulns):
                 {
                     "role": "user",
                     "content": f"""
-Given these Trivy vulnerabilities, return ONLY a JSON array of fixes:
-[{{"pkg": "package-name", "cmd": "npm install pkg@fixed_version --save", "cve": "CVE-XXXX-XXXX"}}]
+Given these Trivy vulnerabilities, return ONLY a JSON array of fixes.
 
-Rules:
-- Use npm/pip/apt depending on the target file
-- Only include packages that have a FixedVersion
-- No markdown, no explanation, just the JSON array
+Command rules by package manager:
+- apt packages → "apt-get install -y --only-upgrade PACKAGE=VERSION"
+- npm packages  → "npm install PACKAGE@VERSION --save"
+- pip packages  → "pip install PACKAGE==VERSION"
+
+To detect the package manager, use the "target" field:
+- target contains "node_modules" or ".json" → npm
+- target contains "requirements" or ".txt"  → pip
+- anything else (lib, usr, bin, dpkg)       → apt-get
+
+Return format:
+[{{"pkg": "package-name", "cmd": "the exact command", "cve": "CVE-XXXX-XXXX"}}]
+
+Only include packages that have a non-empty FixedVersion.
+No markdown, no explanation, just the JSON array.
 
 Vulnerabilities:
 {json.dumps(vulns, indent=2)}
@@ -62,13 +72,19 @@ Vulnerabilities:
 def apply_fixes(fixes):
     applied = []
     for fix in fixes:
-        print(f"Applying: {fix['cmd']}")
-        result = subprocess.run(fix["cmd"], shell=True, capture_output=True, text=True)
+        cmd = fix["cmd"]
+
+        # apt-get nécessite sudo en CI
+        if cmd.startswith("apt-get") and not cmd.startswith("sudo"):
+            cmd = "sudo " + cmd
+
+        print(f"Applying: {cmd}")
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             applied.append(fix)
             print(f"  ✓ Fixed {fix['pkg']} ({fix['cve']})")
         else:
-            print(f"  ✗ Failed: {result.stderr}")
+            print(f"  ✗ Failed: {result.stderr.strip()}")
     return applied
 
 if __name__ == "__main__":
