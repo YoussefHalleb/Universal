@@ -95,6 +95,12 @@ jobs:
       run: python trivy_ai_fix.py
       env:
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+    - name: Create PR with fixes
+      run: python create_pr.py
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
         
     # ====================================
     # Run Application
