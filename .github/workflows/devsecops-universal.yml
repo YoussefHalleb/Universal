@@ -25,8 +25,7 @@ jobs:
     env:
       APP_PORT: ${{ github.event.inputs.app_port || '80' }}
       IMAGE_NAME: scanned-app
-      BACKEND_URL: https://fri-usual-illustrations-theaters.trycloudflare.com 
-
+      BACKEND_URL: https://birmingham-jean-latest-favor.trycloudflare.com
     steps:
 
     # ====================================
@@ -276,7 +275,7 @@ jobs:
 
         try:
             res = requests.post(
-                "https://fri-usual-illustrations-theaters.trycloudflare.com/api/performance/results",
+                "https://birmingham-jean-latest-favor.trycloudflare.com/api/performance/results",
                 json=summary,
                 timeout=10
             )
