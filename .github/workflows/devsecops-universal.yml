@@ -102,6 +102,7 @@ jobs:
         GH_PAT: ${{ secrets.GH_PAT }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         REPO_URL: ${{ github.event.inputs.repo_url }}
+        GITHUB_ACTOR: ${{ github.actor }}
         
     # ====================================
     # Run Application
