@@ -1,5 +1,5 @@
 import json, os, subprocess, re
-import anthropic
+import requests
 
 def load_trivy(path="trivy.json"):
     with open(path) as f:
@@ -20,27 +20,42 @@ def extract_critical_vulns(data, max_vulns=5):
                 })
     return vulns[:max_vulns]
 
-def ask_claude_for_fix(vulns):
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    prompt = f"""
-You are a senior security engineer. Given these vulnerable packages from a Trivy scan,
-generate the exact shell commands needed to update each package to a safe version.
+def ask_groq_for_fix(vulns):
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {os.environ['GROQ_API_KEY']}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "llama-3.1-8b-instant",
+            "temperature": 0.1,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a senior security engineer. Return only valid JSON, no markdown, no explanation."
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+Given these Trivy vulnerabilities, return ONLY a JSON array of fixes:
+[{{"pkg": "package-name", "cmd": "npm install pkg@fixed_version --save", "cve": "CVE-XXXX-XXXX"}}]
+
+Rules:
+- Use npm/pip/apt depending on the target file
+- Only include packages that have a FixedVersion
+- No markdown, no explanation, just the JSON array
 
 Vulnerabilities:
 {json.dumps(vulns, indent=2)}
-
-Rules:
-- Return ONLY a JSON array of objects: [{{"pkg": "...", "cmd": "npm install pkg@version --save", "cve": "..."}}]
-- Use npm/pip/apt depending on the target file context
-- If no fix version is available, skip the package
-- No explanations, no markdown, just the JSON array
 """
-    message = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}]
+                }
+            ]
+        },
+        timeout=30
     )
-    raw = message.content[0].text.strip()
+    resp.raise_for_status()
+    raw = resp.json()["choices"][0]["message"]["content"].strip()
     raw = re.sub(r"```json|```", "", raw).strip()
     return json.loads(raw)
 
@@ -59,17 +74,16 @@ def apply_fixes(fixes):
 if __name__ == "__main__":
     data = load_trivy()
     vulns = extract_critical_vulns(data)
-    
+
     if not vulns:
         print("No critical/high vulns with fixes found.")
         exit(0)
-    
+
     print(f"Found {len(vulns)} critical/high vulnerabilities")
-    fixes = ask_claude_for_fix(vulns)
+    fixes = ask_groq_for_fix(vulns)
     applied = apply_fixes(fixes)
-    
-    # Save summary for the PR script
+
     with open("fix_summary.json", "w") as f:
         json.dump({"applied": applied, "vulns": vulns}, f)
-    
+
     print(f"Applied {len(applied)} fixes.")
