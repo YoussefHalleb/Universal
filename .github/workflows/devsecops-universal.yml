@@ -204,14 +204,17 @@ jobs:
     - name: Upload reports to GCS
       run: |
         ZAP_HTML=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
-        ZAP_XML=$(find . -maxdepth 5 -name "zap.xml" | head -n 1)
-        TRIVY_JSON=$(find . -maxdepth 5 -name "trivy.json" | head -n 1)
 
-        BASE_PATH="gs://${{ vars.GCS_BUCKET }}/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}"
+        if [ -z "$ZAP_HTML" ]; then
+        echo "zap.html not found"
+        exit 0
+        fi
 
-        [ -n "$ZAP_HTML" ] && gcloud storage cp "$ZAP_HTML" "$BASE_PATH/zap.html"
-        [ -n "$ZAP_XML" ] && gcloud storage cp "$ZAP_XML" "$BASE_PATH/zap.xml"
-        [ -n "$TRIVY_JSON" ] && gcloud storage cp "$TRIVY_JSON" "$BASE_PATH/trivy.json"
+        BASE_PATH="gs://secdashboard-security-reports/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}"
+
+        echo "Uploading to $BASE_PATH"
+
+        gcloud storage cp "$ZAP_HTML" "$BASE_PATH/zap.html"
 
 
     - name: Notify backend with GCS path
