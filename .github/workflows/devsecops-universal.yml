@@ -175,25 +175,45 @@ jobs:
           zap.xml
           zap.html
 
-    - name: Debug - find ZAP report
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Debug - find reports
       run: |
-        echo "PWD=$(pwd)"
-        ls -la
-        find . -maxdepth 5 -name "zap.html" -print
+          echo "PWD=$(pwd)"
+          ls -la
+          find . -maxdepth 5 -name "zap.html" -print
+          find . -maxdepth 5 -name "zap.xml" -print
+          find . -maxdepth 5 -name "trivy.json" -print
 
-    - name: Upload ZAP Report to Backend
+    - name: Upload reports to GCS
       run: |
-        ZAP_FILE=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
-        echo "ZAP_FILE=$ZAP_FILE"
+        ZAP_HTML=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
+        ZAP_XML=$(find . -maxdepth 5 -name "zap.xml" | head -n 1)
+        TRIVY_JSON=$(find . -maxdepth 5 -name "trivy.json" | head -n 1)
 
-        if [ -z "$ZAP_FILE" ]; then
-          echo "zap.html not found, skipping upload"
-          exit 0
-        fi
+        BASE_PATH="gs://${{ vars.GCS_BUCKET }}/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}"
 
-        curl -X POST ${{ env.BACKEND_URL }}/api/products/upload-zap \
-          -F "repo_name=${{ env.TARGET_REPO }}" \
-          -F "report=@$ZAP_FILE"
+        [ -n "$ZAP_HTML" ] && gcloud storage cp "$ZAP_HTML" "$BASE_PATH/zap.html"
+        [ -n "$ZAP_XML" ] && gcloud storage cp "$ZAP_XML" "$BASE_PATH/zap.xml"
+        [ -n "$TRIVY_JSON" ] && gcloud storage cp "$TRIVY_JSON" "$BASE_PATH/trivy.json"
+
+
+    - name: Notify backend with GCS path
+      run: |
+          curl -X POST "${{ env.BACKEND_URL }}/api/products/register-security-report" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"repo_name\": \"${{ env.TARGET_REPO }}\",
+            \"zap_report_path\": \"gs://${{ vars.GCS_BUCKET }}/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}/zap.html\",
+            \"zap_xml_path\": \"gs://${{ vars.GCS_BUCKET }}/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}/zap.xml\",
+            \"trivy_report_path\": \"gs://${{ vars.GCS_BUCKET }}/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}/trivy.json\"
+              }"
 
     # ====================================
     # k6 Performance Test
