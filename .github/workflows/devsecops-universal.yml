@@ -92,12 +92,22 @@ jobs:
       run: pip install requests
 
     - name: AI Fix Trivy Vulnerabilities
-      run: python trivy_ai_fix.py
+      run: |
+        ls -la
+        [ -f trivy.json ] && echo "trivy.json exists" || echo "trivy.json missing"
+        python trivy_ai_fix.py
+        ls -la
+        cat fix_summary.json || true
       env:
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
     - name: Create PR with fixes
-      run: python create_pr.py
+      run: |
+        if [ -f fix_summary.json ]; then
+          python create_pr.py
+        else
+          echo "fix_summary.json not found, skipping PR creation"
+        fi
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
         GITHUB_REPOSITORY: ${{ github.repository }}
