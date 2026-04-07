@@ -1,80 +1,173 @@
-import json, os, subprocess, requests, re
+import json
+import os
+import subprocess
+import requests
+import re
+import sys
 from datetime import datetime
 
-GITHUB_TOKEN = os.environ["GH_PAT"]
-REPO = os.environ["GITHUB_REPOSITORY"]
 
-def git(cmd, cwd=None):
-    subprocess.run(cmd, shell=True, check=True, cwd=cwd)
+GITHUB_TOKEN = os.environ.get("GH_PAT")
+REPO = os.environ.get("GITHUB_REPOSITORY", "")
+
+
+def git(cmd, cwd=None, check=True):
+    print(f"Running: {cmd}")
+    return subprocess.run(cmd, shell=True, check=check, cwd=cwd, text=True)
+
+
+def get_repo_owner_and_name():
+    repo_url = os.environ.get("REPO_URL", "").strip()
+
+    if repo_url:
+        match = re.search(r"github\.com[:/](.+)/(.+?)(?:\.git)?$", repo_url)
+        if match:
+            return match.group(1), match.group(2)
+
+    if REPO and "/" in REPO:
+        owner, name = REPO.split("/", 1)
+        return owner, name
+
+    github_actor = os.environ.get("GITHUB_ACTOR", "")
+    return github_actor, "repo"
+
 
 if __name__ == "__main__":
-    with open("fix_summary.json") as f:
+    if not GITHUB_TOKEN:
+        print("GH_PAT is missing, skipping PR creation.")
+        sys.exit(0)
+
+    if not os.path.exists("fix_summary.json"):
+        print("fix_summary.json not found, skipping PR creation.")
+        sys.exit(0)
+
+    with open("fix_summary.json", encoding="utf-8") as f:
         summary = json.load(f)
 
-    applied = summary["applied"]
+    applied = summary.get("applied", [])
     if not applied:
-        print("Nothing to commit.")
-        exit(0)
+        print("No fixes applied. Skipping PR creation.")
+        sys.exit(0)
 
     app_dir = "target-app" if os.path.exists("target-app") else "."
     branch = f"fix/trivy-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    cves = ", ".join(set(f["cve"] for f in applied))
+    cves = ", ".join(sorted(set(f.get("cve", "UNKNOWN-CVE") for f in applied)))
 
-    git(f'git config user.email "security-bot@ci"', cwd=app_dir)
-    git(f'git config user.name "Security Bot"', cwd=app_dir)
+    git('git config user.email "security-bot@ci"', cwd=app_dir)
+    git('git config user.name "Security Bot"', cwd=app_dir)
     git(f"git checkout -b {branch}", cwd=app_dir)
 
-    for f in ["package.json", "package-lock.json", "yarn.lock", "requirements.txt"]:
-        if os.path.exists(os.path.join(app_dir, f)):
-            git(f"git add {f}", cwd=app_dir)
+    tracked_files = [
+        "package.json",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "requirements.txt",
+        "Pipfile",
+        "Pipfile.lock",
+        "poetry.lock",
+        "pyproject.toml",
+        "Dockerfile",
+    ]
 
-    result = subprocess.run("git diff --cached --name-only", shell=True, capture_output=True, text=True, cwd=app_dir)
+    added_any = False
+    for file_name in tracked_files:
+        full_path = os.path.join(app_dir, file_name)
+        if os.path.exists(full_path):
+            git(f'git add "{file_name}"', cwd=app_dir, check=False)
+            added_any = True
+
+    if not added_any:
+        print("No known dependency files found to add.")
+
+    result = subprocess.run(
+        "git diff --cached --name-only",
+        shell=True,
+        capture_output=True,
+        text=True,
+        cwd=app_dir,
+    )
+
     if not result.stdout.strip():
         print("No changes to commit.")
-        exit(0)
+        sys.exit(0)
 
-    git(f'git commit -m "fix(security): auto-fix {len(applied)} Trivy vulnerabilities\n\nCVEs: {cves}"', cwd=app_dir)
+    commit_message = (
+        f"fix(security): auto-fix {len(applied)} Trivy vulnerabilities\n\n"
+        f"CVEs: {cves}"
+    )
+    git(f'git commit -m "{commit_message}"', cwd=app_dir)
 
-    repo_url = os.environ.get("REPO_URL", "")
-    match = re.search(r"github\.com[:/](.+)/(.+?)(?:\.git)?$", repo_url)
-    repo_name = match.group(2) if match else "repo"
-    github_actor = os.environ.get("GITHUB_ACTOR", "YoussefHalleb")
+    owner, repo_name = get_repo_owner_and_name()
+    github_actor = os.environ.get("GITHUB_ACTOR", owner)
 
     fork_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{github_actor}/{repo_name}.git"
-    git(f"git remote add fork {fork_url}", cwd=app_dir)
+
+    remote_check = subprocess.run(
+        "git remote",
+        shell=True,
+        capture_output=True,
+        text=True,
+        cwd=app_dir,
+    )
+
+    if "fork" not in remote_check.stdout.split():
+        git(f"git remote add fork {fork_url}", cwd=app_dir, check=False)
+    else:
+        git(f"git remote set-url fork {fork_url}", cwd=app_dir, check=False)
+
     git(f"git push fork {branch}", cwd=app_dir)
 
-    # ← ICI : détecter automatiquement la branche par défaut
-    repo_info = requests.get(
-        f"https://api.github.com/repos/{github_actor}/{repo_name}",
+    repo_info_resp = requests.get(
+        f"https://api.github.com/repos/{owner}/{repo_name}",
         headers={
             "Authorization": f"Bearer {GITHUB_TOKEN}",
             "Accept": "application/vnd.github+json",
-        }
-    ).json()
+        },
+        timeout=20,
+    )
+    repo_info_resp.raise_for_status()
+    repo_info = repo_info_resp.json()
     default_branch = repo_info.get("default_branch", "main")
+
+    print(f"DEBUG owner={owner}")
+    print(f"DEBUG repo_name={repo_name}")
     print(f"DEBUG default_branch={default_branch}")
 
-    # ← ICI : créer la PR avec la bonne base
+    pr_body_lines = [
+        "## 🤖 Automated Security Fix",
+        "",
+        "Generated by Groq AI from Trivy scan.",
+        "",
+    ]
+    pr_body_lines.extend(
+        [
+            f"- **{fix.get('pkg')}** — {fix.get('cve')}: `{fix.get('cmd')}`"
+            for fix in applied
+        ]
+    )
+
     resp = requests.post(
-        f"https://api.github.com/repos/{github_actor}/{repo_name}/pulls",
+        f"https://api.github.com/repos/{owner}/{repo_name}/pulls",
         json={
             "title": f"fix(security): auto-fix {len(applied)} vulnerabilities [{cves}]",
-            "body": "\n".join([
-                "## 🤖 Automated Security Fix\n",
-                "Generated by Groq AI from Trivy scan.\n",
-                *[f"- **{f['pkg']}** — {f['cve']}: `{f['cmd']}`" for f in applied]
-            ]),
-            "head": branch,
-            "base": default_branch
+            "body": "\n".join(pr_body_lines),
+            "head": f"{github_actor}:{branch}",
+            "base": default_branch,
         },
         headers={
             "Authorization": f"Bearer {GITHUB_TOKEN}",
             "Accept": "application/vnd.github+json",
-        }
+        },
+        timeout=20,
     )
+
     print(f"GitHub response: {resp.status_code}")
-    print(f"GitHub body: {resp.json()}")
+    try:
+        print(f"GitHub body: {resp.json()}")
+    except Exception:
+        print(f"GitHub body (raw): {resp.text}")
+
     resp.raise_for_status()
     pr_url = resp.json()["html_url"]
     print(f"✅ PR created: {pr_url}")
