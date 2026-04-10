@@ -217,16 +217,18 @@ jobs:
         gcloud storage cp "$ZAP_HTML" "$BASE_PATH/zap.html"
 
 
-    - name: Notify backend with GCS path
+    - name: Upload ZAP Report to Backend
       run: |
-          curl -X POST "${{ env.BACKEND_URL }}/api/products/register-security-report" \
-          -H "Content-Type: application/json" \
-          -d "{
-            \"repo_name\": \"${{ env.TARGET_REPO }}\",
-            \"zap_report_path\": \"gs://${{ vars.GCS_BUCKET }}/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}/zap.html\",
-            \"zap_xml_path\": \"gs://${{ vars.GCS_BUCKET }}/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}/zap.xml\",
-            \"trivy_report_path\": \"gs://${{ vars.GCS_BUCKET }}/reports/${{ env.TARGET_REPO }}/${{ github.run_id }}/trivy.json\"
-              }"
+        ZAP_HTML=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
+
+        if [ -z "$ZAP_HTML" ]; then
+          echo "zap.html not found, skipping upload"
+        exit 0
+        fi
+
+        curl -X POST "${{ env.BACKEND_URL }}/api/products/upload-zap" \
+        -F "repo_name=${{ env.TARGET_REPO }}" \
+        -F "report=@$ZAP_HTML"
 
     # ====================================
     # k6 Performance Test
