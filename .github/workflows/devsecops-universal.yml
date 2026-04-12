@@ -216,6 +216,10 @@ jobs:
 
         gcloud storage cp "$ZAP_HTML" "$BASE_PATH/zap.html"
 
+    - name: Sync repositories to DB
+      run: |
+       curl -X GET "${{ env.BACKEND_URL }}/api/repositories"    
+
 
     - name: Upload ZAP Report to Backend
       run: |
