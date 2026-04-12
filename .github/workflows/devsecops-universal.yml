@@ -25,7 +25,7 @@ jobs:
     env:
       APP_PORT: ${{ github.event.inputs.app_port || '80' }}
       IMAGE_NAME: scanned-app
-      BACKEND_URL: http://34.76.186.214
+      https://35.195.231.227.nip.io
     steps:
 
     # ====================================
