@@ -141,15 +141,20 @@ jobs:
     # ====================================
     - name: OWASP ZAP Full Scan
       run: |
-        docker run --rm \
-          --user root \
-          --network zap-net \
-          -v "$(pwd)":/zap/wrk \
-          ghcr.io/zaproxy/zaproxy:stable \
-          zap-full-scan.py \
-          -t http://app-under-test:${APP_PORT} \
-          -x zap.xml \
-          -r zap.html || true
+       docker run --rm \
+        --user root \
+        --network zap-net \
+        -v "$(pwd)":/zap/wrk \
+        ghcr.io/zaproxy/zaproxy:stable \
+        zap-full-scan.py \
+        -t http://app-under-test:${APP_PORT} \
+        -x zap.xml \
+        -r zap.html \
+        -j \
+        -z "-config spider.maxDuration=5 \
+          -config ajaxSpider.maxDuration=5 \
+          -config scanner.attackStrength=MEDIUM \
+          -config scanner.maxScanDurationInMins=10" || true
 
     # ====================================
     # Setup Python
