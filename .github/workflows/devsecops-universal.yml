@@ -130,7 +130,7 @@ jobs:
 
     - name: Wait for Application
       run: |
-        sleep 30
+        sleep 60
         echo "=== Docker logs ==="
         docker logs app-under-test || true
         echo "=== Port check ==="
