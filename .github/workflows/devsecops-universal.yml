@@ -319,7 +319,7 @@ jobs:
 
         try:
             res = requests.post(
-                "http://34.62.192.66/api/performance/results",
+                 "https://35.195.231.227.nip.io/api/performance/results",
                 json=summary,
                 timeout=10
             )
