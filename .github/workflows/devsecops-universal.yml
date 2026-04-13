@@ -228,17 +228,16 @@ jobs:
 
     - name: Upload ZAP Report to Backend
       run: |
-        ZAP_HTML=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
-
-        if [ -z "$ZAP_HTML" ]; then
-          echo "zap.html not found, skipping upload"
-        exit 0
-        fi
-
-        curl -X POST "${{ env.BACKEND_URL }}/api/products/upload-zap" \
+       ZAP_HTML=$(find . -maxdepth 5 -name "zap.html" | head -n 1)
+       if [ -z "$ZAP_HTML" ]; then
+         echo "zap.html not found, skipping upload"
+         exit 0
+       fi
+       cp "$ZAP_HTML" "${{ env.TARGET_REPO }}-zap.html"
+       curl -X POST "${{ env.BACKEND_URL }}/api/products/upload-zap" \
         -F "repo_name=${{ env.TARGET_REPO }}" \
-        -F "report=@$ZAP_HTML"
-
+        -F "report=@${{ env.TARGET_REPO }}-zap.html"
+ 
     # ====================================
     # k6 Performance Test
     # ====================================
