@@ -1,4 +1,4 @@
-name: Universal 
+name: Universal DevSecOps Enterprise Pipeline
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      SCAN_URL: ${{ github.event.inputs.scan_url }}
+      SCAN_URL: ${{ github.event.inputs.scan_url }}  # Assurez-vous que cette variable est définie ici.
       BACKEND_URL: https://35.195.231.227.nip.io
 
     steps:
@@ -31,7 +31,7 @@ jobs:
     - name: Wait for Application
       run: |
         echo "=== Checking if the application is reachable ==="
-        curl -v $SCAN_URL || exit 1
+        curl -v "${{ env.SCAN_URL }}" || exit 1  # Utilisation de la variable d'environnement SCAN_URL
 
     # ====================================
     # OWASP ZAP Scan (DAST)
