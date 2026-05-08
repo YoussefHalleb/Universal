@@ -1,4 +1,4 @@
-name: Universal DevSecOps Enterprise Pipeline
+name: Universal 
 
 on:
   push:
