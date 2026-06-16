@@ -1,4 +1,4 @@
-name: Universal DevSecOps Enterprise Pipeline
+name: Universal DevSecOps Pipeline
 
 on:
   push:
@@ -68,6 +68,17 @@ jobs:
       run: |
         git clone -b ${{ github.event.inputs.repo_branch }} \
         ${{ github.event.inputs.repo_url }} target-app
+
+    # ====================================
+    # SonarQube Scan (SAST)
+    # ====================================
+    - name: SonarQube Scan
+      uses: SonarSource/sonarqube-scan-action@v4
+      with:
+        projectBaseDir: ${{ env.WORKDIR }}
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        SONAR_HOST_URL: https://freely-shared-thus-julia.trycloudflare.com
 
     # ====================================
     # Build Docker Image
@@ -237,111 +248,3 @@ jobs:
        curl -X POST "${{ env.BACKEND_URL }}/api/products/upload-zap" \
         -F "repo_name=${{ env.TARGET_REPO }}" \
         -F "report=@${{ env.TARGET_REPO }}-zap.html"
- 
-    # ====================================
-    # k6 Performance Test
-    # ====================================
-    - name: Install k6
-      run: |
-        curl https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz -L | tar xvz
-        sudo mv k6-v0.50.0-linux-amd64/k6 /usr/local/bin/
-        k6 version
-
-    - name: Run k6 Performance Test
-      run: |
-        APP_URL="http://localhost:${APP_PORT}" \
-        PRODUCT_NAME="${{ env.TARGET_REPO }}" \
-        k6 run k6-test.js 2>&1 | tee k6-output.txt || true
-
-    - name: Parse k6 results and send to backend
-      run: |
-        python3 - <<'EOF'
-        import re, json, requests, os
-
-        try:
-            output = open("k6-output.txt").read()
-        except:
-            output = ""
-
-        print("K6 OUTPUT:")
-        print(output)
-
-        def to_ms(s):
-            if not s:
-                return 0
-            s = s.strip()
-            if "µs" in s or "us" in s:
-                val = float(re.sub(r'[^\d.]', '', s.replace("µs","").replace("us","")))
-                return round(val / 1000, 4)
-            elif "ms" in s:
-                return round(float(re.sub(r'[^\d.]', '', s.replace("ms",""))), 2)
-            elif "s" in s and "m" not in s:
-                return round(float(re.sub(r'[^\d.]', '', s.replace("s",""))) * 1000, 2)
-            elif "m" in s:
-                parts = re.findall(r'(\d+\.?\d*)', s)
-                if len(parts) >= 2:
-                    return round(float(parts[0]) * 60000 + float(parts[1]) * 1000, 2)
-            try:
-                return round(float(re.sub(r'[^\d.]', '', s)), 2)
-            except:
-                return 0
-
-        def get_ms(pattern, text=None):
-          src = text if text else output
-          m = re.search(pattern, src)
-          return to_ms(m.group(1)) if m else 0
-
-        def get_float(pattern):
-            m = re.search(pattern, output)
-            return float(m.group(1)) if m else 0
-
-        avg     = get_ms(r'http_req_duration[\s.✓]+:.*?avg=([\d.]+(?:µs|us|ms|s))')
-        min_val = get_ms(r'http_req_duration[\s.✓]+:.*?min=([\d.]+(?:µs|us|ms|s))')
-        max_val = get_ms(r'http_req_duration[\s.✓]+:.*?max=([\d.]+(?:µs|us|ms|s))')
-        p90 = get_ms(r'p\(90\)=([\d.]+(?:µs|us|ms|s))', output.split('http_req_duration')[1] if 'http_req_duration' in output else output)
-        p95 = get_ms(r'p\(95\)=([\d.]+(?:µs|us|ms|s))', output.split('http_req_duration')[1] if 'http_req_duration' in output else output)
-        total   = int(get_float(r'http_reqs[\s.]+:\s*(\d+)'))
-        tput    = get_float(r'http_reqs[\s.]+:.*?([\d.]+)/s')
-        erate   = get_float(r'http_req_failed[\s.✓]+:\s*([\d.]+)%')
-
-        summary = {
-            "product_name":    os.environ.get("TARGET_REPO", "unknown"),
-            "app_url":         f"http://localhost:{os.environ.get('APP_PORT', '80')}",
-            "duration_secs":   150,
-            "vus":             100,
-            "total_requests":  total,
-            "failed_requests": 0,
-            "error_rate":      erate,
-            "avg_response_ms": avg,
-            "min_response_ms": min_val,
-            "max_response_ms": max_val,
-            "p90_response_ms": p90,
-            "p95_response_ms": p95,
-            "throughput":      tput,
-        }
-
-        print("SUMMARY:", json.dumps(summary, indent=2))
-
-        with open("summary.json", "w") as f:
-            json.dump(summary, f)
-
-        try:
-            res = requests.post(
-                 "https://35.195.231.227.nip.io/api/performance/results",
-                json=summary,
-                timeout=10
-            )
-            print("Backend response:", res.status_code, res.text)
-        except Exception as e:
-            print("Failed to send:", e)
-        EOF
-      env:
-        TARGET_REPO: ${{ env.TARGET_REPO }}
-        APP_PORT: ${{ env.APP_PORT }}
-
-    - name: Upload k6 Report
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: k6-report
-        path: summary.json
